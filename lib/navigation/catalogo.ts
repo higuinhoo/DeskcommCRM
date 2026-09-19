@@ -276,6 +276,15 @@ export const NAV_CATALOG = [
 
   // ---- Agente de IA — montar, ensinar, acompanhar ----
   {
+    href: "/app/assistant",
+    label: "Meu Assistente",
+    description: "Configure o assistente de IA em linguagem simples: tom, serviços, limites e autonomia.",
+    icon: "Sparkle",
+    group: "ia",
+    section: "Montar o agente",
+    sidebar: true,
+  },
+  {
     href: "/app/ai/agents",
     label: "Agentes",
     description: "Quem atende por você: instruções, modelo, ferramentas e publicação.",

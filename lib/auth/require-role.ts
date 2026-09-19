@@ -1,3 +1,6 @@
+import { env } from "@/lib/env";
+import { productContext } from "@/lib/product/server";
+import { moduleDecision, moduleForResource } from "@/lib/product/capabilities";
 /**
  * Helper ÚNICO de autorização por role nas rotas /api/v1 (spec 13 §4 — G2-01).
  *
@@ -26,8 +29,7 @@ import { traduzir } from "@/lib/i18n/dicionario";
 import { createClient } from "@/lib/supabase/server";
 
 export type RoleCheck =
-  | { ok: true; user: AuthUser; org: ActiveOrg }
-  | { ok: false; response: NextResponse<ApiError> };
+  { ok: true; user: AuthUser; org: ActiveOrg } | { ok: false; response: NextResponse<ApiError> };
 
 interface RequireRoleOpts {
   /** Correlaciona a resposta e o audit com o X-Request-Id da rota. */
@@ -59,22 +61,32 @@ export async function requireRole(min: Role, opts: RequireRoleOpts = {}): Promis
   const t = (texto: string) => traduzir(texto, user.idioma);
 
   if (user.support && user.support.status !== "active") {
-    return { ok: false, response: fail("forbidden", "O acompanhamento terminou. Saia para continuar.", 403, { requestId }) };
+    return {
+      ok: false,
+      response: fail("forbidden", "O acompanhamento terminou. Saia para continuar.", 403, {
+        requestId,
+      }),
+    };
   }
   let org: ActiveOrg | null;
   if (organizationId) {
     const membership = user.organizations.find((o) => o.organization_id === organizationId);
-    org = user.support?.organization_id === organizationId
-      ? { orgId: organizationId, name: user.support.name, role: user.support.access_mode === "full" ? "admin" : "viewer" }
-      : membership
-      ? {
-          orgId: membership.organization_id,
-          name: membership.organization_name,
-          role: membership.role,
-        }
-      : allowPlatformAdmin && user.is_platform_admin
-        ? { orgId: organizationId, name: "—", role: "viewer" }
-        : null;
+    org =
+      user.support?.organization_id === organizationId
+        ? {
+            orgId: organizationId,
+            name: user.support.name,
+            role: user.support.access_mode === "full" ? "admin" : "viewer",
+          }
+        : membership
+          ? {
+              orgId: membership.organization_id,
+              name: membership.organization_name,
+              role: membership.role,
+            }
+          : allowPlatformAdmin && user.is_platform_admin
+            ? { orgId: organizationId, name: "—", role: "viewer" }
+            : null;
   } else {
     org = await resolveActiveOrg(user);
   }
@@ -83,6 +95,29 @@ export async function requireRole(min: Role, opts: RequireRoleOpts = {}): Promis
       ok: false,
       response: fail("forbidden_tenant", t("Sem organização ativa."), 403, { requestId }),
     };
+  }
+
+  const productModule = moduleForResource(resource);
+  if ((env.PRODUCT_PROFILES_ENABLED || user.support?.preview_context) && productModule) {
+    try {
+      const context = await productContext(org, user);
+      const decision = moduleDecision(productModule, context);
+      if (!decision.allowed)
+        return {
+          ok: false,
+          response: fail("module_unavailable", decision.reason, 403, { requestId }),
+        };
+    } catch {
+      return {
+        ok: false,
+        response: fail(
+          "upstream_unavailable",
+          "Não foi possível confirmar os recursos da organização.",
+          503,
+          { requestId },
+        ),
+      };
+    }
   }
 
   if (allowPlatformAdmin && user.is_platform_admin && !user.support) {
@@ -98,7 +133,11 @@ export async function requireRole(min: Role, opts: RequireRoleOpts = {}): Promis
     return { ok: false, response: fail("internal_error", error.message, 500, { requestId }) };
   }
 
-  const rank = effectiveRole ? (ROLE_RANK[effectiveRole as Role] ?? 0) : 0;
+  const previewRole = user.support?.organization_id === org.orgId
+    ? user.support.preview_context?.role : null;
+  const resolvedRole = previewRole && effectiveRole && ROLE_RANK[previewRole] < (ROLE_RANK[effectiveRole as Role] ?? 0)
+    ? previewRole : effectiveRole;
+  const rank = resolvedRole ? (ROLE_RANK[resolvedRole as Role] ?? 0) : 0;
 
   // MFA como política de SESSÃO, não só de cadastro.
   //
@@ -152,5 +191,5 @@ export async function requireRole(min: Role, opts: RequireRoleOpts = {}): Promis
     };
   }
 
-  return { ok: true, user, org: { ...org, role: effectiveRole as Role } };
+  return { ok: true, user, org: { ...org, role: resolvedRole as Role } };
 }

@@ -1,3 +1,7 @@
+import { applyPreview, previewContextSchema } from "@/lib/impersonate/preview";
+import { contextFromSettings, requestProductDecision } from "@/lib/product/request";
+import { moduleForPath } from "@/lib/product/capabilities";
+import { fail } from "@/lib/api/wrappers";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookieSecure } from "@/lib/supabase/cookie-secure";
 import { NextResponse, type NextRequest } from "next/server";
@@ -88,6 +92,62 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
+  // Resolve a organização com a mesma fonte do app, sem confiar no cookie sozinho.
+  if (moduleForPath(pathname)) {
+    try {
+      const { data: support, error: supportError } = await supabase.rpc("fn_support_context");
+      if (supportError) throw new Error("product_context_unavailable");
+      let organizationId: string | undefined;
+      if (support?.status === "active") organizationId = support.organization_id;
+      else if (support)
+        return fail("forbidden", "O acompanhamento terminou. Saia para continuar.", 403, {
+          requestId,
+        });
+      else {
+        const { data: memberships, error } = await supabase
+          .from("user_organizations")
+          .select("organization_id")
+          .eq("user_id", user.id)
+          .is("revoked_at", null)
+          .order("accepted_at", { ascending: true })
+          .order("organization_id", { ascending: true });
+        if (error) throw new Error("product_context_unavailable");
+        const selected = request.cookies.get("active_org")?.value;
+        organizationId =
+          memberships?.find((m) => m.organization_id === selected)?.organization_id ??
+          memberships?.[0]?.organization_id;
+      }
+      if (organizationId && (env.PRODUCT_PROFILES_ENABLED || support?.preview_context)) {
+        const { data: organization, error } = await supabase
+          .from("organizations")
+          .select("settings")
+          .eq("id", organizationId)
+          .maybeSingle();
+        if (error || !organization) throw new Error("product_context_unavailable");
+        const { data: platform, error: platformError } = await supabase.rpc("fn_is_platform_admin");
+        if (platformError) throw new Error("product_context_unavailable");
+        const decision = requestProductDecision(
+          pathname,
+          applyPreview(
+            contextFromSettings(organizationId, env.PRODUCT_PROFILES_ENABLED ? organization.settings : {}, "viewer", platform === true),
+            support?.preview_context ? previewContextSchema.parse(support.preview_context) : null,
+          ),
+        );
+        if (!decision.allowed)
+          return pathname.startsWith("/api/")
+            ? fail("module_unavailable", decision.reason, 403, { requestId })
+            : NextResponse.redirect(new URL("/app?feature=unavailable", request.url));
+      }
+    } catch {
+      return fail(
+        "upstream_unavailable",
+        "Não foi possível confirmar os recursos disponíveis. Tente novamente.",
+        503,
+        { requestId },
+      );
+    }
+  }
+
   // EPIC-11 S-11.07: validate impersonate cookie on /app/* paths. Middleware
   // runs in Edge — no DB access, only HMAC + expiry. On any failure we delete
   // the presentation cookie. The database support session remains authoritative:
@@ -123,6 +183,8 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    "/api/:path*",
+    "/app/:path*",
     // Run on all paths except static assets / Next internals.
     "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js)$).*)",
   ],

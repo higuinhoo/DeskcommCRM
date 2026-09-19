@@ -27754,6 +27754,296 @@ comment on column public.ad_platform_connections.google_login_customer_id is
 comment on column public.ad_platform_connections.google_conversion_action_id is
   'Qual ação de conversão, dentro de google_customer_id, recebe os envios de venda. Formato: só o id numérico, o resource name completo é montado no transporte.';
 
+-- 20260919050000_0312_product_profiles_policy.sql
+-- Reutiliza organizations.settings. Produto é independente de memberships/papéis.
+-- Não altera organizações existentes, contatos, funis, pedidos ou agentes.
+create or replace function public.fn_protect_product_policy()
+returns trigger language plpgsql security definer set search_path = public as $f$
+begin
+ if (auth.role() in ('authenticated','anon') or current_setting('role',true) in ('authenticated','anon'))
+    and (new.settings->'product_platform') is distinct from (old.settings->'product_platform') then
+   raise exception 'product_policy_platform_only' using errcode='42501';
+ end if;
+ return new;
+end $f$;
+revoke all on function public.fn_protect_product_policy() from public, anon, authenticated;
+grant execute on function public.fn_protect_product_policy() to service_role;
+drop trigger if exists protect_product_policy on public.organizations;
+create trigger protect_product_policy before update of settings on public.organizations
+ for each row execute function public.fn_protect_product_policy();
+
+create or replace function public.fn_set_product_policy(p_actor uuid,p_session uuid,p_org uuid,p_expected integer,p_config jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $f$
+declare v_settings jsonb; v_revision integer; v_config jsonb;
+begin
+ if not exists(select 1 from auth.sessions s join public.platform_admins a on a.user_id=s.user_id
+   where s.id=p_session and s.user_id=p_actor and a.revoked_at is null and a.scope='full'
+   and (s.not_after is null or s.not_after>now())
+   and (not (a.mfa_required or exists(select 1 from auth.mfa_factors f where f.user_id=p_actor and f.status='verified')) or s.aal='aal2')) then
+  raise exception 'product_policy_authority_required' using errcode='42501';
+ end if;
+ if exists(select 1 from public.platform_support_sessions where auth_session_id=p_session and ended_at is null) then
+  raise exception 'preview_readonly' using errcode='42501';
+ end if;
+ if p_expected is null or p_expected<0 or p_config is null or jsonb_typeof(p_config)<>'object' or octet_length(p_config::text)>65536 then
+  raise exception 'product_policy_invalid';
+ end if;
+ select settings into v_settings from public.organizations where id=p_org and status<>'redacted' for update;
+ if not found then raise exception 'product_policy_organization_not_found'; end if;
+ v_revision=coalesce((v_settings#>>'{product_platform,revision}')::integer,0);
+ if v_revision<>p_expected then raise exception 'product_policy_revision_conflict' using errcode='40001'; end if;
+ v_config=jsonb_set(p_config,'{revision}',to_jsonb(v_revision+1),true);
+ update public.organizations set settings=jsonb_set(coalesce(v_settings,'{}'::jsonb),'{product_platform}',v_config,true) where id=p_org;
+ return v_config;
+end $f$;
+revoke all on function public.fn_set_product_policy(uuid,uuid,uuid,integer,jsonb) from public, anon, authenticated;
+grant execute on function public.fn_set_product_policy(uuid,uuid,uuid,integer,jsonb) to service_role;
+
+-- 20260919070000_0313_preview_context_na_sessao.sql
+-- 0313: preview context na sessão de suporte
+-- Adiciona preview_context JSONB à platform_support_sessions para que o
+-- platform_admin possa simular perfil, papel e interface sem alterar a configuração
+-- persistida da organização. O banco é a única fonte de autoridade do preview;
+-- o cookie de impersonação existente (HMAC, HttpOnly) continua sendo o portador.
+--
+-- Campos do preview_context:
+--   profile: "essential" | "assistant_agenda" | "sales"   (perfil de produto simulado)
+--   role: "viewer" | "agent" | "manager" | "admin"         (papel simulado)
+--   interface_mode: "simple" | "advanced"                  (complexidade visual simulada)
+--   is_lab: boolean                                         (true = organização de lab/demo)
+--   lab_org_id: uuid | null                                 (ID da org de lab, se is_lab)
+--
+-- O preview_context nunca concede acesso a dados de outra organização.
+-- Workers, automações e tarefas em background ignoram completamente o preview.
+
+alter table public.platform_support_sessions
+  add column if not exists preview_context jsonb;
+
+-- Valida o preview_context quando presente: só chaves conhecidas e valores válidos.
+alter table public.platform_support_sessions
+  drop constraint if exists platform_support_sessions_preview_context_valid;
+
+alter table public.platform_support_sessions
+  add constraint platform_support_sessions_preview_context_valid
+  check (
+    preview_context is null
+    or (
+      jsonb_typeof(preview_context) = 'object'
+      and octet_length(preview_context::text) <= 2048
+      and (preview_context->>'profile' is null or preview_context->>'profile' in ('essential','assistant_agenda','sales'))
+      and (preview_context->>'role' is null or preview_context->>'role' in ('viewer','agent','manager','admin'))
+      and (preview_context->>'interface_mode' is null or preview_context->>'interface_mode' in ('simple','advanced'))
+    )
+  );
+
+-- Atualiza fn_support_context para expor o preview_context na resposta JSON.
+-- Nenhum outro campo é alterado; callers existentes recebem o campo adicional
+-- e continuam funcionando (extensão aditiva).
+create or replace function public.fn_support_context()
+returns jsonb language sql stable security definer set search_path = public as $f$
+ select jsonb_build_object(
+   'id', s.id,
+   'organization_id', s.organization_id,
+   'actor_user_id', s.actor_user_id,
+   'auth_session_id', s.auth_session_id,
+   'previous_organization_id', s.previous_organization_id,
+   'expires_at', s.expires_at,
+   'name', o.display_name,
+   'locale', o.locale,
+   'preview_context', s.preview_context,
+   'access_mode', case
+     when s.access_mode = 'support_readonly' or p.scope <> 'full'
+     then 'support_readonly' else 'full' end,
+   'status', case
+     when s.expires_at <= now() then 'expired'
+     when p.user_id is null or a.id is null or (a.not_after is not null and a.not_after <= now())
+       or o.status <> 'active' then 'revoked'
+     when (p.mfa_required or exists(select 1 from auth.mfa_factors f where f.user_id=s.actor_user_id and f.status='verified'))
+       and coalesce(auth.jwt()->>'aal','aal1') <> 'aal2' then 'revoked'
+     else 'active' end)
+ from public.platform_support_sessions s
+ join public.organizations o on o.id=s.organization_id
+ left join public.platform_admins p on p.user_id=s.actor_user_id and p.revoked_at is null
+ left join auth.sessions a on a.id=s.auth_session_id and a.user_id=s.actor_user_id
+ where s.actor_user_id=auth.uid()
+ and s.auth_session_id=nullif(auth.jwt()->>'session_id','')::uuid and s.ended_at is null
+ limit 1;
+$f$;
+revoke all on function public.fn_support_context() from public, anon;
+grant execute on function public.fn_support_context() to authenticated, service_role;
+
+-- fn_set_preview_context: atualiza o preview_context da sessão ativa.
+-- Só o ator da sessão pode alterar seu próprio preview; service_role apenas.
+create or replace function public.fn_set_preview_context(
+  p_actor uuid,
+  p_session uuid,
+  p_preview jsonb
+) returns jsonb language plpgsql security definer set search_path = public as $f$
+declare v_row public.platform_support_sessions;
+begin
+  -- Valida que o ator possui a sessão ativa e que a sessão não expirou.
+  update public.platform_support_sessions
+    set preview_context = p_preview
+    where actor_user_id = p_actor
+      and auth_session_id = p_session
+      and ended_at is null
+      and expires_at > now()
+    returning * into v_row;
+  if not found then
+    raise exception 'preview_session_not_found' using errcode = '22000';
+  end if;
+  return to_jsonb(v_row);
+end $f$;
+revoke all on function public.fn_set_preview_context(uuid, uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.fn_set_preview_context(uuid, uuid, jsonb) to service_role;
+
+-- 20260919100000_0314_preview_somente_leitura.sql
+-- Preview é somente leitura no banco, nas APIs e nos callbacks.
+-- Limpar o preview mantém somente leitura: edição exige uma nova sessão explícita.
+create or replace function public.fn_support_context()
+returns jsonb language sql stable security definer set search_path = public as $f$
+ select jsonb_build_object(
+   'id', s.id,
+   'organization_id', s.organization_id,
+   'actor_user_id', s.actor_user_id,
+   'auth_session_id', s.auth_session_id,
+   'previous_organization_id', s.previous_organization_id,
+   'expires_at', s.expires_at,
+   'name', o.display_name,
+   'locale', o.locale,
+   'preview_context', s.preview_context,
+   'access_mode', case
+     when s.preview_context is not null or s.access_mode = 'support_readonly' or p.scope <> 'full'
+     then 'support_readonly' else 'full' end,
+   'status', case
+     when s.expires_at <= now() then 'expired'
+     when p.user_id is null or a.id is null or (a.not_after is not null and a.not_after <= now())
+       or o.status <> 'active' then 'revoked'
+     when (p.mfa_required or exists(select 1 from auth.mfa_factors f where f.user_id=s.actor_user_id and f.status='verified'))
+       and coalesce(auth.jwt()->>'aal','aal1') <> 'aal2' then 'revoked'
+     else 'active' end)
+ from public.platform_support_sessions s
+ join public.organizations o on o.id=s.organization_id
+ left join public.platform_admins p on p.user_id=s.actor_user_id and p.revoked_at is null
+ left join auth.sessions a on a.id=s.auth_session_id and a.user_id=s.actor_user_id
+ where s.actor_user_id=auth.uid()
+ and s.auth_session_id=nullif(auth.jwt()->>'session_id','')::uuid and s.ended_at is null
+ limit 1;
+$f$;
+revoke all on function public.fn_support_context() from public, anon;
+grant execute on function public.fn_support_context() to authenticated, service_role;
+
+
+create or replace function public.fn_set_preview_context(p_actor uuid, p_session uuid, p_preview jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $f$
+declare v_row public.platform_support_sessions;
+begin
+  perform 1 from auth.sessions a join public.platform_admins p on p.user_id=a.user_id
+  where a.id=p_session and a.user_id=p_actor and p.revoked_at is null
+    and (a.not_after is null or a.not_after>now())
+    and (not (p.mfa_required or exists(select 1 from auth.mfa_factors f where f.user_id=p_actor and f.status='verified'))
+      or a.aal::text='aal2') for update of a;
+  if not found then raise exception 'preview_authority_required' using errcode='42501'; end if;
+  if p_preview is not null and (
+    jsonb_typeof(p_preview)<>'object' or octet_length(p_preview::text)>2048
+    or (p_preview - array['profile','role','interface_mode','is_lab']) <> '{}'::jsonb
+    or coalesce(p_preview->>'profile','essential') not in ('essential','assistant_agenda','sales')
+    or coalesce(p_preview->>'role','viewer') not in ('viewer','agent','manager','admin')
+    or coalesce(p_preview->>'interface_mode','simple') not in ('simple','advanced')
+    or (p_preview ? 'is_lab' and p_preview->'is_lab' is distinct from 'false'::jsonb)
+  ) then raise exception 'preview_invalid' using errcode='22023'; end if;
+  update public.platform_support_sessions s
+    set preview_context=p_preview, access_mode='support_readonly'
+    where s.actor_user_id=p_actor and s.auth_session_id=p_session
+      and s.ended_at is null and s.expires_at>now()
+      and exists(select 1 from public.organizations o where o.id=s.organization_id and o.status='active')
+    returning s.* into v_row;
+  if not found then raise exception 'preview_session_not_found' using errcode='22000'; end if;
+  return to_jsonb(v_row);
+end $f$;
+revoke all on function public.fn_set_preview_context(uuid,uuid,jsonb) from public,anon,authenticated;
+grant execute on function public.fn_set_preview_context(uuid,uuid,jsonb) to service_role;
+
+create or replace function public.fn_support_callback_write_allowed(p_org uuid,p_actor uuid default null,p_session uuid default null)
+returns boolean language sql stable security definer set search_path=public as $f$
+ select not exists(
+ select 1 from platform_support_sessions s
+ left join platform_admins p on p.user_id=s.actor_user_id and p.revoked_at is null
+ left join auth.sessions a on a.id=s.auth_session_id and a.user_id=s.actor_user_id
+ join organizations o on o.id=s.organization_id
+ where s.organization_id=p_org and s.ended_at is null
+ and (p_actor is null or s.actor_user_id=p_actor)
+ and (p_session is null or s.auth_session_id=p_session)
+ and (s.preview_context is not null or s.access_mode<>'full' or p.scope<>'full' or p.user_id is null or s.expires_at<=now()
+ or a.id is null or (a.not_after is not null and a.not_after<=now()) or o.status<>'active'
+ or ((p.mfa_required or exists(select 1 from auth.mfa_factors f where f.user_id=s.actor_user_id and f.status='verified')) and coalesce(a.aal::text,'aal1')<>'aal2')));
+$f$;
+revoke all on function public.fn_support_callback_write_allowed(uuid,uuid,uuid) from public,anon,authenticated;
+grant execute on function public.fn_support_callback_write_allowed(uuid,uuid,uuid) to service_role;
+
+notify pgrst, 'reload schema';
+
+-- 20260919110000_0315_assistente_config_por_versao.sql
+-- Configuração guiada pertence à versão; rascunhar não altera o runtime publicado.
+alter table public.ai_agent_versions add column if not exists assistant_config jsonb;
+
+create or replace function public.fn_guard_assistant_version()
+returns trigger language plpgsql set search_path=public as $f$
+begin
+  if old.assistant_config is not null and
+     (to_jsonb(new)-array['status','published_at','superseded_at']) is distinct from
+     (to_jsonb(old)-array['status','published_at','superseded_at']) then
+    raise exception 'assistant_create_new_draft' using errcode='42501';
+  end if;
+  if new.assistant_config is not null and new.status='published' and old.status is distinct from 'published'
+     and not exists(select 1 from public.ai_agent_runs r where r.organization_id=new.organization_id
+       and r.agent_id=new.agent_id and r.agent_version_id=new.id and r.is_dry_run and r.status='completed') then
+    raise exception 'assistant_test_required' using errcode='42501';
+  end if;
+  return new;
+end $f$;
+revoke all on function public.fn_guard_assistant_version() from public,anon,authenticated;
+grant execute on function public.fn_guard_assistant_version() to service_role;
+drop trigger if exists guard_assistant_version on public.ai_agent_versions;
+create trigger guard_assistant_version before update on public.ai_agent_versions
+for each row execute function public.fn_guard_assistant_version();
+
+-- Junto da troca do ponteiro publicado, no MESMO commit. Pausa e nome preservados.
+create or replace function public.fn_apply_assistant_config()
+returns trigger language plpgsql set search_path=public as $f$
+declare cfg jsonb;
+begin
+  if new.published_version_id is distinct from old.published_version_id then
+    select assistant_config into cfg from public.ai_agent_versions
+      where id=new.published_version_id and agent_id=new.id and organization_id=new.organization_id;
+    if cfg is not null then
+      new.config:=jsonb_set(coalesce(new.config,'{}'::jsonb),'{assistant_config}',cfg);
+      new.operation_mode:=case when cfg->>'autonomy'='suggest_only' then 'assisted' else 'automatic' end;
+    end if;
+  end if;
+  return new;
+end $f$;
+revoke all on function public.fn_apply_assistant_config() from public,anon,authenticated;
+grant execute on function public.fn_apply_assistant_config() to service_role;
+drop trigger if exists aaa_apply_assistant_config on public.ai_agents;
+create trigger aaa_apply_assistant_config before update on public.ai_agents
+for each row execute function public.fn_apply_assistant_config();
+notify pgrst, 'reload schema';
+
+-- 20260919120000_0316_product_policy_auth_portavel.sql
+-- Usa o mesmo JWT validado disponível no Supabase e no baseline de testes.
+create or replace function public.fn_protect_product_policy()
+returns trigger language plpgsql security definer set search_path = public as $f$
+begin
+ if (auth.jwt()->>'role' in ('authenticated','anon') or current_setting('role',true) in ('authenticated','anon'))
+    and (new.settings->'product_platform') is distinct from (old.settings->'product_platform') then
+   raise exception 'product_policy_platform_only' using errcode='42501';
+ end if;
+ return new;
+end $f$;
+revoke all on function public.fn_protect_product_policy() from public, anon, authenticated;
+grant execute on function public.fn_protect_product_policy() to service_role;
+
 -- ---- VARREDURA anon: função nova nasce exposta em quem ATUALIZA (migration 0116) ----
 --
 -- ⚠️ DE PROPÓSITO, NENHUMA FUNÇÃO É CRIADA DEPOIS DESTE BLOCO. Apêndice que cria
@@ -27971,6 +28261,50 @@ notify pgrst, 'reload schema';
 update storage.buckets
 set allowed_mime_types = array['application/pdf', 'text/markdown', 'text/x-markdown', 'text/plain', 'text/csv']
 where id = 'ai-policy';
+
+-- ---- Google Cloud Vertex AI em modo Express (migration 0311) ----
+-- Mesmo catálogo Gemini, provider separado: a chave, o endpoint, o destino dos
+-- dados e o faturamento são da Vertex AI. `ai_pricing` continua por model_id,
+-- portanto não há uma segunda linha de preço para o mesmo Gemini.
+insert into public.ai_models
+  (provider, model_id, display_name, description, context_window,
+   input_price_per_million_cents, output_price_per_million_cents,
+   supports_tools, supports_vision, is_default_for_provider, released_at,
+   metadata)
+select
+  'vertex', model_id, display_name,
+  coalesce(description, '') || ' Via Google Cloud Vertex AI (modo Express).',
+  context_window, input_price_per_million_cents,
+  output_price_per_million_cents, supports_tools, supports_vision,
+  model_id = 'gemini-3.5-flash', released_at,
+  coalesce(metadata, '{}'::jsonb) || '{"authentication":"express_api_key"}'::jsonb
+from public.ai_models
+where provider = 'google'
+  and model_id in (
+    'gemini-3.5-flash',
+    'gemini-3.1-pro-preview',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-pro'
+  )
+on conflict (provider, model_id) do update set
+  display_name = excluded.display_name,
+  description = excluded.description,
+  context_window = excluded.context_window,
+  input_price_per_million_cents = excluded.input_price_per_million_cents,
+  output_price_per_million_cents = excluded.output_price_per_million_cents,
+  supports_tools = excluded.supports_tools,
+  supports_vision = excluded.supports_vision,
+  released_at = excluded.released_at,
+  metadata = excluded.metadata;
+
+update public.ai_models
+set is_default_for_provider = false
+where provider = 'vertex' and is_default_for_provider;
+
+update public.ai_models
+set is_default_for_provider = true
+where provider = 'vertex' and model_id = 'gemini-3.5-flash';
 -- ---- travas do modo somente leitura do suporte, depois de toda tabela (migration 0274) ----
 --
 -- ⚠️ ESTA CHAMADA É O ÚLTIMO BLOCO DO ARQUIVO. Tabela nova, coluna
@@ -27980,3 +28314,15 @@ where id = 'ai-policy';
 -- tests/invariants/travas-de-suporte-cobrem-toda-tabela-na-instalacao.test.ts.
 -- A definição da função está antes da varredura de anon.
 do $f$ begin perform public.fn_aplicar_travas_de_suporte(); end $f$;
+
+-- ---- Perfis de produto (migration 0312) ----
+
+
+-- ---- Preview context na sessão de suporte (migration 0313) ----
+
+
+-- 20260919100000_0314_preview_somente_leitura.sql
+
+
+-- 20260919110000_0315_assistente_config_por_versao.sql
+

@@ -2,11 +2,14 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { fail } from "@/lib/api/wrappers";
 
+import { previewContextSchema } from "@/lib/impersonate/preview";
+
 export const supportSchema = z.object({
   id: z.string().uuid(), organization_id: z.string().uuid(), actor_user_id: z.string().uuid(),
   auth_session_id: z.string().uuid(), previous_organization_id: z.string().uuid().nullable(),
   expires_at: z.string(), name: z.string(), locale: z.string().nullable(),
   access_mode: z.enum(["full", "support_readonly"]), status: z.enum(["active", "expired", "revoked"]),
+  preview_context: previewContextSchema.nullable().optional(),
 });
 export type SupportContext = z.infer<typeof supportSchema>;
 
@@ -20,6 +23,7 @@ export async function readSupportContext(db: Awaited<ReturnType<typeof createCli
 export function supportWriteError(support: SupportContext | null | undefined, organizationId?: string): string | null {
   if (!support || (organizationId && organizationId !== support.organization_id)) return null;
   if (support.status !== "active") return "O acompanhamento terminou. Saia do acompanhamento para continuar.";
+  if (support.preview_context) return "A simulação permite somente leitura.";
   if (support.access_mode !== "full") return "Este acompanhamento permite somente leitura.";
   return null;
 }

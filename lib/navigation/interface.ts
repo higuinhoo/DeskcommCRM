@@ -1,3 +1,4 @@
+import { moduleDecision, moduleForPath, type CapabilityContext } from "@/lib/product/capabilities";
 /** Apresentação por vínculo. Nunca é autorização de página, API ou ação. */
 import { z } from "zod";
 import { ROLE_RANK, type Role } from "@/lib/auth/types";
@@ -15,7 +16,9 @@ export const interfaceSettingsSchema = z
       .optional(),
   })
   .strict();
-export type InterfaceSettings = z.infer<typeof interfaceSettingsSchema>;
+export type InterfaceSettings = z.infer<typeof interfaceSettingsSchema> & {
+  product_context?: CapabilityContext;
+};
 export const INTERFACE_COMPLETA: InterfaceSettings = { preset: "completa" };
 const SIMPLIFICADA: readonly NavDestinationId[] = [
   "/app/inbox",
@@ -76,9 +79,20 @@ export function destinosDaInterface(
   role: Role | null,
 ): NavMetadata[] {
   const { settings } = lerInterface(raw);
-  const allowed = permitidos(platform, role);
+  const context =
+    raw && typeof raw === "object" && "product_context" in raw
+      ? (raw as InterfaceSettings).product_context
+      : undefined;
+  const effectiveRole = context?.role ?? role;
+  const effectivePlatform = context?.isPlatformAdmin ?? platform;
+  const allowed = permitidos(effectivePlatform, effectiveRole).filter((d) => {
+    const productModule = moduleForPath(d.href);
+    return !context || !productModule || moduleDecision(productModule, context).allowed;
+  });
   const chosen =
-    settings.destinos ?? (settings.preset === "simplificada" ? SIMPLIFICADA : undefined);
+    context?.product.enabled && context.product.interface_mode === "simple"
+      ? ["/app/inbox", "/app/assistant", "/app/agenda", "/app/connections"]
+      : settings.destinos ?? (settings.preset === "simplificada" ? SIMPLIFICADA : undefined);
   return allowed.filter(
     (d) => essencial(d, role, platform) || !chosen || chosen.includes(d.href as NavDestinationId),
   );

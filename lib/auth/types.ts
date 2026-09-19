@@ -1,3 +1,5 @@
+import type { CapabilityContext } from "@/lib/product/capabilities";
+import type { SupportContext } from "@/lib/impersonate/support";
 import type { InterfaceSettings } from "@/lib/navigation/interface";
 import type { Idioma } from "@/lib/i18n/idiomas";
 
@@ -79,7 +81,7 @@ export interface UserOrgMembership {
 }
 
 export interface AuthUser {
-  support?: import("@/lib/impersonate/support").SupportContext | null;
+  support?: SupportContext | null;
   id: string;
   email: string;
   full_name: string | null;
@@ -137,7 +139,9 @@ export interface AuthUser {
 }
 
 export interface ActiveOrg {
+  product_context?: CapabilityContext;
   interface_settings?: InterfaceSettings;
+  vocabulary?: import("@/lib/vocabulary").VocabularyTerms;
   orgId: string;
   name: string;
   role: Role;

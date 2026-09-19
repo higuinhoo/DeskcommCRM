@@ -66,11 +66,20 @@ export const PROVEDORES = [
   {
     id: "google",
     rotulo: "Google (Gemini)",
-    quandoUsar:
-      "Alternativa com contexto muito longo e custo baixo para tarefas de classificação.",
+    quandoUsar: "Alternativa com contexto muito longo e custo baixo para tarefas de classificação.",
     aceitaEndpointProprio: false,
     catalogoSincronizavel: false,
     ondePegarAChave: "https://aistudio.google.com/apikey",
+    prefixoDaChave: "AIza…",
+  },
+  {
+    id: "vertex",
+    rotulo: "Google Cloud Vertex AI",
+    quandoUsar:
+      "Gemini pela infraestrutura da Google Cloud, com faturamento e governança no projeto Cloud. Esta opção usa uma API key do modo Express da Vertex AI.",
+    aceitaEndpointProprio: false,
+    catalogoSincronizavel: false,
+    ondePegarAChave: "https://console.cloud.google.com/vertex-ai/studio",
     prefixoDaChave: "AIza…",
   },
   {

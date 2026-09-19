@@ -870,6 +870,11 @@ const HOSTS_DECLARADOS: Record<string, EntradaDeHost> = {
     motivo:
       "endpoint padrão do adapter do canal de mensagens, com override por ZERNIO_API_BASE_URL. Fixo de propósito: instalação que não configura nada tem de funcionar.",
   },
+  "aiplatform.googleapis.com": {
+    categoria: "FORNECEDOR",
+    motivo:
+      "endpoint da API Vertex AI do Google (lib/agent-engine/edge/llm/providers.ts e lib/ai/provider-validators.ts). É o destino das chamadas ao modelo; trocar pelo domínio do revendedor faria a chamada não chegar a lugar nenhum.",
+  },
   // ── painel do fornecedor: texto de tela apontando para o endereço DELE ────
   "platform.openai.com": {
     categoria: "CONSOLE",
@@ -883,6 +888,11 @@ const HOSTS_DECLARADOS: Record<string, EntradaDeHost> = {
   "aistudio.google.com": {
     categoria: "CONSOLE",
     motivo: "Google AI Studio — onde o usuário cria a chave do Gemini.",
+  },
+  "console.cloud.google.com": {
+    categoria: "CONSOLE",
+    motivo:
+      "Google Cloud Console, onde o usuário ativa a API Vertex AI e gera o token de serviço (lib/ai/pontos/provedores.ts). Endereço do fornecedor por definição — é de lá que a credencial sai.",
   },
   "partners.tiendanube.com": {
     categoria: "CONSOLE",
@@ -1072,6 +1082,12 @@ describe("catraca de host de terceiro no código que embarca", () => {
       "000000000000-xxxxxxxx.apps.googleusercontent.com",
       "aistudio.google.com",
       "console.anthropic.com",
+      // Decisão escrita: `console.cloud.google.com` é o Google Cloud Console,
+      // onde o usuário ativa a API Vertex AI e gera o token de serviço
+      // (lib/ai/pontos/provedores.ts). O produto NÃO fala com esse host; quem
+      // navega até lá é o operador no navegador. Entrou como CONSOLE porque
+      // é o painel de credenciais — mesma natureza de `aistudio.google.com`.
+      "console.cloud.google.com",
       "deskcomm.app",
       "meet.google.com",
       "meusistema.com",

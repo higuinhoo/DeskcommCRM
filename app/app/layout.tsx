@@ -1,3 +1,4 @@
+import { productContext } from "@/lib/product/server";
 import { InterfaceRefresh } from "@/hooks/auth/InterfaceRefresh";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
@@ -13,9 +14,7 @@ import { marcaDaInstalacao } from "@/lib/branding/instalacao";
 import { resolverMarcaDaOrganizacao } from "@/lib/branding/organizacao";
 import { env } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
-import {
-  ImpersonateBanner,
-} from "@/components/app/ImpersonateBanner";
+import { ImpersonateBanner } from "@/components/app/ImpersonateBanner";
 import { ConexaoCaidaBanner } from "@/components/app/ConexaoCaidaBanner";
 import { IdiomaProvider } from "@/lib/i18n/IdiomaProvider";
 import { listarConexoesCaidas, type ConexaoCaida } from "@/lib/channels/health";
@@ -52,6 +51,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
    * e não aqui: a precedência é regra do produto, não detalhe deste layout.
    */
   let cssDaOrganizacao: string | null = null;
+
+  if (activeOrg) {
+    const context = await productContext(activeOrg, user);
+    activeOrg = {
+      ...activeOrg,
+      product_context: context,
+      interface_settings: {
+        ...(activeOrg.interface_settings ?? { preset: "completa" }),
+        product_context: context,
+      },
+    };
+  }
 
   // EPIC-02: gate /app/* on completed onboarding.
   // EPIC-11: gate /app/* on org not being suspended (S-11.08).
@@ -93,12 +104,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         .maybeSingle(),
       listarConexoesCaidas(admin, activeOrg.orgId),
       isMfaEnrolled(),
-      requiresMfa(
-        activeOrg.role,
-        user.is_platform_admin,
-        user.id,
-        activeOrg.orgId,
-      ),
+      requiresMfa(activeOrg.role, user.is_platform_admin, user.id, activeOrg.orgId),
     ]);
 
     const orgRow = orgRes.data;
@@ -110,10 +116,24 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     if (orgRow?.status === "suspended") redirect("/account-suspended");
     // G4-02: expõe visibility_mode ao client (inbox decide visões visíveis).
     // Fonte confiável (admin client, org do cookie validado) — nunca do body.
-    const mode = (orgRow?.settings as { visibility_mode?: VisibilityMode } | null)
-      ?.visibility_mode;
+    const mode = (orgRow?.settings as { visibility_mode?: VisibilityMode } | null)?.visibility_mode;
+    
+    // Resolvemos o vocabulário aqui para injetar no client context
+    const settingsVocab = activeOrg.product_context?.product;
+    const resolvedVocab = await import("@/lib/vocabulary").then(m => 
+      m.resolveVocabulary(
+        settingsVocab?.vocabulary, 
+        settingsVocab?.custom_vocabulary, 
+        activeOrg?.product_context?.product?.profile
+      )
+    );
+
     activeOrg = {
       ...activeOrg,
+      orgId: activeOrg.orgId,
+      name: activeOrg.name,
+      role: activeOrg.role,
+      vocabulary: resolvedVocab,
       visibility_mode: mode ?? DEFAULT_VISIBILITY_MODE,
       // Mesma linha de `settings` já lida acima — nenhuma consulta a mais.
       cliente_pela_agenda: clientePelaAgendaLigado(orgRow?.settings),
@@ -182,10 +202,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const store = await cookies();
   const collapsed = store.get("sidebar_collapsed")?.value === "1";
 
-  const impersonating = user.support ? {
-    tenantId: user.support.organization_id, tenantName: user.support.name,
-    expiresAt: user.support.expires_at, accessMode: user.support.access_mode,
-  } : null;
+  const impersonating = user.support
+    ? {
+        tenantId: user.support.organization_id,
+        tenantName: user.support.name,
+        expiresAt: user.support.expires_at,
+        accessMode: user.support.preview_context ? "support_readonly" as const : user.support.access_mode,
+        previewContext: user.support.preview_context,
+      }
+    : null;
 
   const shell = (
     <VoiceCallProvider>
@@ -203,9 +228,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // pergunta quem está logado. Ver `lib/i18n/IdiomaProvider`: foi o
     // acoplamento com a autenticação que derrubou 32 casos.
     <IdiomaProvider locale={user.idioma}>
-    <AuthProvider user={user} activeOrg={activeOrg}>
-      <InterfaceRefresh userId={user.id} org={activeOrg} support={!!user.support} />
-      {/*
+      <AuthProvider user={user} activeOrg={activeOrg}>
+        <InterfaceRefresh userId={user.id} org={activeOrg} support={!!user.support} />
+        {/*
         O MARCADOR da marca da organização — o elemento cuja existência define o
         escopo `body:has([data-marca-org])` (lib/branding/css.ts).
 
@@ -220,20 +245,20 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         veria a tela de cadastro de MFA — a PRIMEIRA tela dele — com a cor da
         instalação, e depois o resto do produto com a dele.
       */}
-      <div data-marca-org="" className="contents">
-        <EstiloDaMarcaDaOrganizacao css={cssDaOrganizacao} />
-        <ImpersonateBanner impersonating={impersonating} />
-        <ConexaoCaidaBanner caidas={conexoesCaidas} />
-        {needsMfaGate ? (
-          // Gate always mounted for MFA-required roles; it latches the blocking
-          // decision client-side so the enroll Server Action's revalidation
-          // can't tear down the recovery-codes screen mid-flow.
-          <MfaEnrollGate enrolled={enrolled}>{shell}</MfaEnrollGate>
-        ) : (
-          shell
-        )}
-      </div>
-    </AuthProvider>
+        <div data-marca-org="" className="contents">
+          <EstiloDaMarcaDaOrganizacao css={cssDaOrganizacao} />
+          <ImpersonateBanner impersonating={impersonating} />
+          <ConexaoCaidaBanner caidas={conexoesCaidas} />
+          {needsMfaGate ? (
+            // Gate always mounted for MFA-required roles; it latches the blocking
+            // decision client-side so the enroll Server Action's revalidation
+            // can't tear down the recovery-codes screen mid-flow.
+            <MfaEnrollGate enrolled={enrolled}>{shell}</MfaEnrollGate>
+          ) : (
+            shell
+          )}
+        </div>
+      </AuthProvider>
     </IdiomaProvider>
   );
 }

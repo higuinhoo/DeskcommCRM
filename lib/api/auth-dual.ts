@@ -1,3 +1,6 @@
+import { env } from "@/lib/env";
+import { loadProductPolicy } from "@/lib/product/server";
+import { requestProductDecision } from "@/lib/product/request";
 /**
  * Resolução de identidade para rotas que atendem NAVEGADOR e SERVIDOR.
  *
@@ -105,6 +108,37 @@ export async function resolveAuthDual(
         };
       }
       throw err;
+    }
+
+    if (env.PRODUCT_PROFILES_ENABLED) {
+      try {
+        const policy = await loadProductPolicy(auth.organizationId);
+        const decision = requestProductDecision(req.nextUrl.pathname, {
+          organizationId: auth.organizationId,
+          role: auth.role,
+          isPlatformAdmin: false,
+          plan: policy.plan,
+          planModules: policy.plan_modules,
+          product: policy.product,
+          flags: policy.flags,
+          experimentalOptIn: policy.experimental_opt_in,
+        });
+        if (!decision.allowed)
+          return {
+            ok: false,
+            response: fail("module_unavailable", decision.reason, 403, { requestId }),
+          };
+      } catch {
+        return {
+          ok: false,
+          response: fail(
+            "upstream_unavailable",
+            "Não foi possível confirmar os recursos da organização.",
+            503,
+            { requestId },
+          ),
+        };
+      }
     }
 
     // organization_id vem do TOKEN (fonte confiável), nunca do cliente.

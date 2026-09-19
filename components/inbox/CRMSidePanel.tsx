@@ -27,6 +27,8 @@ import { useEditLead } from "@/hooks/kanban/useUpdateLead";
 import { cn } from "@/lib/utils";
 import { rotuloDoContato } from "@/lib/contacts/rotulo-do-contato";
 import { phoneForDisplay } from "@/lib/channels/phone-variants";
+import { useModuleAccess } from "@/hooks/product/useProductModules";
+import { useVocabulary } from "@/hooks/vocabulary/useVocabulary";
 
 interface Props {
   conversation: ConversationWithContact | null;
@@ -454,9 +456,11 @@ function CamposDoFunil({
 
 export function CRMSidePanel({ conversation }: Props) {
   const { user } = useAuth();
-  const readonly = user.support?.access_mode === "support_readonly";
+  const readonly = user?.support?.access_mode === "support_readonly";
   const localeDaData = useLocaleDeData();
   const t = useT();
+  const vocab = useVocabulary();
+  const showSales = useModuleAccess("sales");
   const contact = conversation?.contacts ?? null;
   const contactId = contact?.id ?? null;
   const [desfechoDraft, setDesfechoDraft] = useState<DesfechoDraft | null>(null);
@@ -628,16 +632,18 @@ export function CRMSidePanel({ conversation }: Props) {
             >
               <Tag size={12} className="mr-1" weight="regular" aria-hidden /> {t("Tags do contato")}
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 px-2 text-xs"
-              disabled={readonly || !contactId || (leadDialogOpen && defaultPipeline.isLoading)}
-              onClick={() => setLeadDialogOpen(true)}
-            >
-              <Users size={12} className="mr-1" weight="regular" aria-hidden />
-              {leadDialogOpen && defaultPipeline.isLoading ? t("Carregando…") : t("Novo Lead")}
-            </Button>
+            {showSales && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs"
+                disabled={readonly || !contactId || (leadDialogOpen && defaultPipeline.isLoading)}
+                onClick={() => setLeadDialogOpen(true)}
+              >
+                <Users size={12} className="mr-1" weight="regular" aria-hidden />
+                {leadDialogOpen && defaultPipeline.isLoading ? t("Carregando…") : t(vocab.new_deal)}
+              </Button>
+            )}
             {contactId && (
               <Button asChild size="sm" variant="ghost" className="h-7 px-2 text-xs">
                 <Link href={`/app/contacts/${contactId}`}>
@@ -748,25 +754,28 @@ export function CRMSidePanel({ conversation }: Props) {
       </section>
       <Separator />
 
-      <section data-testid="inbox-campos-lead">
-        <h3 className="text-xs font-semibold text-text">
-          {t("Leads recentes")}
-        </h3>
-        {sectionsLoading ? (
-          <Skeleton className="mt-2 h-14 w-full" />
-        ) : leads && leads.length > 0 ? (
-          <fieldset disabled={readonly}><InboxLeadEditor
-            leads={leads}
-            selecionadoId={leadAtivoId}
-            onSelecionar={setLeadAtivoId}
-            onSalvo={recarregar}
-          /></fieldset>
-        ) : (
-          <SemLista vazio="Sem leads." erro={erro} onTentarDeNovo={() => setTentativa((n) => n + 1)} />
-        )}
-      </section>
+      {showSales && (
+        <>
+          <section data-testid="inbox-campos-lead">
+            <h3 className="text-xs font-semibold text-text">
+              {t(vocab.deals)} {t("recentes")}
+            </h3>
+            {sectionsLoading ? (
+              <Skeleton className="mt-2 h-14 w-full" />
+            ) : leads && leads.length > 0 ? (
+              <fieldset disabled={readonly}><InboxLeadEditor
+                leads={leads}
+                selecionadoId={leadAtivoId}
+                onSelecionar={setLeadAtivoId}
+                onSalvo={recarregar}
+              /></fieldset>
+            ) : (
+              <SemLista vazio={t(`Sem ${vocab.deals.toLowerCase()}.`)} erro={erro} onTentarDeNovo={() => setTentativa((n) => n + 1)} />
+            )}
+          </section>
 
-      <Separator />
+          <Separator />
+
 
       <section>
         <h3 className="text-xs font-semibold text-text">
@@ -797,6 +806,8 @@ export function CRMSidePanel({ conversation }: Props) {
           <SemLista vazio="Sem pedidos." erro={erro} onTentarDeNovo={() => setTentativa((n) => n + 1)} />
         )}
       </section>
+      </>
+      )}
 
       <Separator />
 
