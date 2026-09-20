@@ -24,8 +24,15 @@
  */
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createVertex } from "@ai-sdk/google-vertex";
 import { createOpenAI } from "@ai-sdk/openai";
-import { generateText, stepCountIs, type LanguageModel, type StopCondition, type ToolSet } from "ai";
+import {
+  generateText,
+  stepCountIs,
+  type LanguageModel,
+  type StopCondition,
+  type ToolSet,
+} from "ai";
 
 // Fonte única do endpoint — a mesma constante que o registry de produção usa.
 // Repetir a URL aqui criaria dois lugares para consertar quando ela mudar.
@@ -155,9 +162,11 @@ function buildSentinelRegex(keywords: string[]): RegExp | null {
  * lá não existe faria o ensaio passar e a mensagem real falhar.
  */
 export function chaveDePlataforma(provider: string): string | null {
-  const nome = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", openrouter: "OPENROUTER_API_KEY" }[
-    provider
-  ];
+  const nome = {
+    anthropic: "ANTHROPIC_API_KEY",
+    openai: "OPENAI_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
+  }[provider];
   if (!nome) return null;
   const v = (process.env[nome] ?? "").trim();
   return v === "" ? null : v;
@@ -171,6 +180,8 @@ export function buildModel(provider: string, apiKey: string, modelId: string): L
       return createOpenAI({ apiKey })(modelId);
     case "google":
       return createGoogleGenerativeAI({ apiKey })(modelId);
+    case "vertex":
+      return createVertex({ apiKey })(modelId);
     // O ensaio precisa alcançar o mesmo provedor que o turno real alcança.
     // Sem este caso, o dono que instalou pela opção [1] do instalador publica
     // o agente, clica em "Teste" para conferir antes de confiar, e recebe
@@ -187,7 +198,9 @@ export function buildModel(provider: string, apiKey: string, modelId: string): L
   }
 }
 
-function totalUsage(steps: ReadonlyArray<{ usage?: { inputTokens?: number; outputTokens?: number } }>) {
+function totalUsage(
+  steps: ReadonlyArray<{ usage?: { inputTokens?: number; outputTokens?: number } }>,
+) {
   let inputTokens = 0;
   let outputTokens = 0;
   for (const s of steps) {
@@ -245,16 +258,23 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
     organizationId: run.organization_id,
     resourceType: "ai_agent_run",
     resourceId: run.id,
-    metadata: { agent_id: run.agent_id, agent_version_id: run.agent_version_id, is_dry_run: run.is_dry_run },
+    metadata: {
+      agent_id: run.agent_id,
+      agent_version_id: run.agent_version_id,
+      is_dry_run: run.is_dry_run,
+    },
   });
-  await admin.rpc("emit_event" as never, {
-    p_event_type: "ai_agent.run_started",
-    p_entity_kind: "ai_agent_run",
-    p_entity_id: run.id,
-    p_payload: { run_id: run.id, agent_id: run.agent_id, is_dry_run: run.is_dry_run },
-    p_metadata: { source: "agent-runtime" },
-    p_organization_id: run.organization_id,
-  } as never);
+  await admin.rpc(
+    "emit_event" as never,
+    {
+      p_event_type: "ai_agent.run_started",
+      p_entity_kind: "ai_agent_run",
+      p_entity_id: run.id,
+      p_payload: { run_id: run.id, agent_id: run.agent_id, is_dry_run: run.is_dry_run },
+      p_metadata: { source: "agent-runtime" },
+      p_organization_id: run.organization_id,
+    } as never,
+  );
 
   let ephemeralTokenId: string | null = null;
 
@@ -356,14 +376,20 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
         id: string;
         group_chat_id: string | null;
         is_group: boolean;
-        contacts: { phone_number: string | null; wa_identity: string | null; wa_lid: string | null } | null;
+        contacts: {
+          phone_number: string | null;
+          wa_identity: string | null;
+          wa_lid: string | null;
+        } | null;
         channel_sessions: ChannelSessionRef | null;
       } | null;
       if (conv) {
         // Mesmo seam do handler de envio: quem sabe de que coluna sai o ref da
         // sessão, e como o telefone vira endereço, é `lib/channels/`.
         waSessionName = conv.channel_sessions ? resolveSessionRef(conv.channel_sessions) : null;
-        chatId = getAdapter(conv.channel_sessions?.provider ?? DEFAULT_CHANNEL_PROVIDER).resolveRecipient({
+        chatId = getAdapter(
+          conv.channel_sessions?.provider ?? DEFAULT_CHANNEL_PROVIDER,
+        ).resolveRecipient({
           isGroup: conv.is_group,
           groupChatId: conv.group_chat_id,
           phoneNumber: conv.contacts?.phone_number,
@@ -385,7 +411,12 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
           ttlMs: ttlDaAutorizacaoMs(process.env),
         });
         if (elegib !== null && !elegib.permite) {
-          return await failRun(run, "nao_elegivel_para_ia", `elegibilidade: ${elegib.motivo}`, startedAt);
+          return await failRun(
+            run,
+            "nao_elegivel_para_ia",
+            `elegibilidade: ${elegib.motivo}`,
+            startedAt,
+          );
         }
       } catch (err) {
         return await failRun(
@@ -501,7 +532,9 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
         abortReason = "handoff_tool";
         return true;
       }
-      const usage = totalUsage(steps as Array<{ usage?: { inputTokens?: number; outputTokens?: number } }>);
+      const usage = totalUsage(
+        steps as Array<{ usage?: { inputTokens?: number; outputTokens?: number } }>,
+      );
       const totalTokens = usage.inputTokens + usage.outputTokens;
       if (totalTokens > version.token_budget) {
         abortReason = "token_budget_exceeded";
@@ -535,7 +568,9 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
     });
 
     // 12) Aggregate metrics.
-    const usage = totalUsage(result.steps as Array<{ usage?: { inputTokens?: number; outputTokens?: number } }>);
+    const usage = totalUsage(
+      result.steps as Array<{ usage?: { inputTokens?: number; outputTokens?: number } }>,
+    );
     const cost = await computeCostCents({
       provider: version.provider,
       model: version.model,
@@ -711,12 +746,7 @@ async function failRun(
   };
 }
 
-function failFast(
-  run: RunRow,
-  code: string,
-  message: string,
-  startedAt: number,
-): RunAgentResult {
+function failFast(run: RunRow, code: string, message: string, startedAt: number): RunAgentResult {
   // Used when we couldn't even promote to running — no row mutation here.
   return {
     run_id: run.id,

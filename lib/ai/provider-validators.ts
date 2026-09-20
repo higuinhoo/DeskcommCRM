@@ -8,7 +8,7 @@
  *
  * Timeout 5s, sem retry. Erros 401 são distintos de erros de rede.
  */
-import { PROVEDORES } from "@/lib/ai/pontos/provedores";
+import type { PROVEDORES } from "@/lib/ai/pontos/provedores";
 
 /**
  * Os provedores cuja CHAVE este arquivo sabe validar.
@@ -115,6 +115,50 @@ export async function validateGoogleKey(apiKey: string): Promise<ValidationResul
 }
 
 /**
+ * A Vertex AI em modo Express autentica com API key no header
+ * `x-goog-api-key`. Ela não expõe um endpoint de catálogo autenticado que
+ * prove a chave, então a validação faz a menor geração possível no modelo
+ * usado pelo exemplo oficial atual da Google. A chave nunca entra na URL nem no
+ * log da aplicação.
+ */
+export async function validateVertexKey(apiKey: string): Promise<ValidationResult> {
+  try {
+    const res = await timedFetch(
+      "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.5-flash:generateContent",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: "Responda OK." }] }],
+          generationConfig: { maxOutputTokens: 1, temperature: 0 },
+        }),
+      },
+    );
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, error: "auth_failed_401" };
+    }
+    if (!res.ok) {
+      return { ok: false, error: `provider_status_${res.status}` };
+    }
+    return {
+      ok: true,
+      models: [
+        "gemini-3.5-flash",
+        "gemini-3.1-pro-preview",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-pro",
+      ],
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.name : "network_error" };
+  }
+}
+
+/**
  * OpenRouter expõe `/api/v1/key` (metadados da própria chave) e `/api/v1/models`
  * (catálogo).
  *
@@ -169,10 +213,7 @@ export async function validateOpenRouterKey(apiKey: string): Promise<ValidationR
   }
 }
 
-export function validateProviderKey(
-  provider: Provider,
-  apiKey: string,
-): Promise<ValidationResult> {
+export function validateProviderKey(provider: Provider, apiKey: string): Promise<ValidationResult> {
   switch (provider) {
     case "anthropic":
       return validateAnthropicKey(apiKey);
@@ -180,6 +221,8 @@ export function validateProviderKey(
       return validateOpenAIKey(apiKey);
     case "google":
       return validateGoogleKey(apiKey);
+    case "vertex":
+      return validateVertexKey(apiKey);
     case "openrouter":
       return validateOpenRouterKey(apiKey);
     default: {

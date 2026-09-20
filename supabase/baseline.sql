@@ -27971,6 +27971,50 @@ notify pgrst, 'reload schema';
 update storage.buckets
 set allowed_mime_types = array['application/pdf', 'text/markdown', 'text/x-markdown', 'text/plain', 'text/csv']
 where id = 'ai-policy';
+
+-- ---- Google Cloud Vertex AI em modo Express (migration 0311) ----
+-- Mesmo catálogo Gemini, provider separado: a chave, o endpoint, o destino dos
+-- dados e o faturamento são da Vertex AI. `ai_pricing` continua por model_id,
+-- portanto não há uma segunda linha de preço para o mesmo Gemini.
+insert into public.ai_models
+  (provider, model_id, display_name, description, context_window,
+   input_price_per_million_cents, output_price_per_million_cents,
+   supports_tools, supports_vision, is_default_for_provider, released_at,
+   metadata)
+select
+  'vertex', model_id, display_name,
+  coalesce(description, '') || ' Via Google Cloud Vertex AI (modo Express).',
+  context_window, input_price_per_million_cents,
+  output_price_per_million_cents, supports_tools, supports_vision,
+  model_id = 'gemini-3.5-flash', released_at,
+  coalesce(metadata, '{}'::jsonb) || '{"authentication":"express_api_key"}'::jsonb
+from public.ai_models
+where provider = 'google'
+  and model_id in (
+    'gemini-3.5-flash',
+    'gemini-3.1-pro-preview',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-pro'
+  )
+on conflict (provider, model_id) do update set
+  display_name = excluded.display_name,
+  description = excluded.description,
+  context_window = excluded.context_window,
+  input_price_per_million_cents = excluded.input_price_per_million_cents,
+  output_price_per_million_cents = excluded.output_price_per_million_cents,
+  supports_tools = excluded.supports_tools,
+  supports_vision = excluded.supports_vision,
+  released_at = excluded.released_at,
+  metadata = excluded.metadata;
+
+update public.ai_models
+set is_default_for_provider = false
+where provider = 'vertex' and is_default_for_provider;
+
+update public.ai_models
+set is_default_for_provider = true
+where provider = 'vertex' and model_id = 'gemini-3.5-flash';
 -- ---- travas do modo somente leitura do suporte, depois de toda tabela (migration 0274) ----
 --
 -- ⚠️ ESTA CHAMADA É O ÚLTIMO BLOCO DO ARQUIVO. Tabela nova, coluna

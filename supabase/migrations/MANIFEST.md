@@ -45,6 +45,7 @@ aplica.
 
 | Version | Name | Description |
 |---|---|---|
+| `20260918223000` | `0311_vertex_ai_express` | **Google Cloud Vertex AI vira um provider nativo do CRM por API key (modo Express).** O provider é separado de `google`: apesar de ambos executarem Gemini, a credencial, o endpoint, o faturamento e o destino operacional são da Vertex AI. A migration replica para `vertex` as cinco linhas Gemini curadas que o modo Express atende e marca `gemini-3.5-flash` como padrão; `ai_pricing` não é duplicada porque sua identidade é o `model_id`, compartilhado pelos dois transports. Sem coluna, tabela, RLS, grant ou backfill. Baseline com apêndice idempotente; runtime, ensaio e ponte legada usam `@ai-sdk/google-vertex`; validação prova a chave no endpoint Express via `x-goog-api-key`, sem segredo na URL. Gate: `tests/unit/vertex-ai-provider.test.ts` mais `tests/unit/provedores-x-registry.test.ts`. |
 | `20260428195354` | `0001_platform_base` | organizations, user_organizations, platform_admins, api_tokens, api_audit_log, user_recovery_codes, idempotency_keys + RLS helpers (fn_user_org_ids, fn_is_platform_admin, fn_user_role_in_org, fn_role_at_least) |
 | `20260428195513` | `0002_event_log_and_compat` | event_log + emit_event/fn_log_event helpers + compat aliases (fn_set_updated_at, fn_user_role_in returning int) |
 | `20260428195708` | `0003_customer_360` | contacts (CPF encrypted), crm_pipelines, crm_stages, crm_leads, crm_lead_activities, crm_lead_links, merge_queue + 5 domain triggers |
