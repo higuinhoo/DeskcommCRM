@@ -10,8 +10,12 @@ on:
 # `contents: read` cobre os dois, que é o escopo que o próprio modelo de dados do
 # CodeQL prescreve para essas duas actions. O `cache: pnpm` NÃO usa este token
 # (usa ACTIONS_RUNTIME_TOKEN), `pnpm/action-setup` não tem input de token, e
-# nenhum passo `run:` enxerga o token — ele só entra no ambiente via
-# `secrets.GITHUB_TOKEN`, que não aparece em nenhum destes workflows.
+# nenhum passo `run:` enxerga o token por padrão — ele só entra no ambiente via
+# `secrets.GITHUB_TOKEN`. Os passos que o fazem, e por quê, estão ao lado de
+# cada `GH_TOKEN:`; para contar em vez de acreditar nesta linha:
+#   grep -n 'secrets.GITHUB_TOKEN' .github/workflows/ci.yml
+# (Esta linha afirmava "não aparece em nenhum destes workflows" com dois usos já
+# na main — achado 9 da revisão do #1268.)
 #
 # No topo, e não por job, porque os dois jobs precisam do mesmo escopo e job
 # acrescentado depois nasce restrito em vez de herdar o default do repositório.
@@ -94,6 +98,70 @@ jobs:
       - name: Marcar o início (o orçamento de tempo mede no fim do job)
         run: echo "VERIFY_INICIO=$(date +%s)" >> "$GITHUB_ENV"
 
+      # ── O VERDE DESTE PR É DE QUAL ÁRVORE? ────────────────────────────────
+      #
+      # Em `pull_request`, o CI mede a PRÉVIA do merge — base + head no instante
+      # do evento — e essa prévia NÃO se atualiza sozinha quando a `main` anda.
+      # Medido em 18/09/2026: três PRs "mergeable e verdes" tinham prévia
+      # atrasada em 29, 52 e 35 commits; e o PR de release #1229 foi mesclado
+      # contra uma base 5 commits velha, com um fragmento de `.changes/` que a
+      # prévia não continha — a versão teria saído com um conserto dentro e sem
+      # nota.
+      #
+      # Avisar só "atrasada em N commits" seria RUÍDO: a `main` recebeu ~40
+      # merges neste único dia, então quase todo PR está atrasado e o aviso
+      # perderia o sentido em uma semana. O aviso aqui é o CRUZAMENTO: a `main`
+      # andou em arquivos que ESTE PR também toca. É o caso em que o verde
+      # mediu uma árvore que não existe mais — e é exatamente a forma dos dois
+      # defeitos de hoje (fragmento órfão e `modify/delete` em `.changes/`).
+      #
+      # Nunca reprova: um PR não pode ficar vermelho porque outra pessoa
+      # mesclou algo enquanto ele esperava vaga na fila. Quem decide o rebase é
+      # quem vai mesclar — este passo só tira a decisão do escuro.
+      - name: A prévia deste PR mediu a main de agora?
+        if: github.event_name == 'pull_request' && matrix.parte == 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          # `base.sha` é a base da PRÓPRIA prévia que este run está medindo.
+          comp=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BASE}...${GITHUB_BASE_REF:-main}" 2>/dev/null) || {
+            echo "::warning::não consegui comparar a base da prévia com a ${GITHUB_BASE_REF:-main} — NÃO MEDIDO"; exit 0; }
+          atraso=$(printf '%s' "$comp" | jq -r '.ahead_by // 0')
+          printf '%s' "$comp" | jq -r '.files[]?.filename' | sort -u > /tmp/main-andou.txt
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --jq '.[].filename' 2>/dev/null | sort -u > /tmp/pr-toca.txt
+          cruzamento=$(comm -12 /tmp/main-andou.txt /tmp/pr-toca.txt)
+          n=$(printf '%s' "$cruzamento" | grep -c . || true)
+          {
+            echo "## A prévia deste PR"
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| base medida por este run | \`${BASE:0:9}\` |"
+            echo "| commits que a \`${GITHUB_BASE_REF:-main}\` andou desde então | ${atraso} |"
+            echo "| desses, arquivos que este PR TAMBÉM toca | ${n} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${n:-0}" -gt 0 ]; then
+            echo "::warning title=O verde deste PR mediu uma árvore que já não existe::a ${GITHUB_BASE_REF:-main} andou ${atraso} commits desde a base desta prévia, e ${n} arquivo(s) do seu PR mudaram lá. Rebase/merge antes de mesclar — o verde atual não mediu o que seria mesclado."
+            printf '%s\n' "$cruzamento" | head -10 | sed "s|^|::warning::também mudou na ${GITHUB_BASE_REF:-main}: |"
+            {
+              echo ""
+              echo "Arquivos em comum (até 10):"
+              echo ""
+              printf '%s\n' "$cruzamento" | head -10 | sed "s|^|- \`|; s|$|\`|"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "prévia com base ${BASE:0:9}; a ${GITHUB_BASE_REF:-main} andou ${atraso} commits, nenhum nos arquivos deste PR"
+          fi
+          # A lista de arquivos da comparação vem truncada acima de 300 arquivos
+          # (limite da API): cruzamento vazio num intervalo enorme é NÃO MEDIDO,
+          # não "não houve".
+          if [ "$atraso" -gt 250 ]; then
+            echo "::warning::a comparação pode ter vindo truncada (${atraso} commits) — cruzamento vazio aqui é NÃO MEDIDO"
+          fi
+
       - uses: ./.github/actions/preparar-node
         # O teto do preâmbulo mora aqui porque passo de composite action não
         # aceita `timeout-minutes`. Razão e medições: o cabeçalho da action.
@@ -143,6 +211,59 @@ jobs:
         if: matrix.parte == 1
         run: pnpm checar:colisao-de-migration
 
+      # POR QUE NÃO HÁ UMA CAMADA "o número foi tomado depois da prévia": o
+      # passo acima JÁ É ELA. O script busca a base no remoto no instante do job
+      # (`git fetch +refs/heads/<base>`) e compara contra `git ls-tree` dela —
+      # ou seja, contra a `main` de AGORA, não contra a base da prévia. Escrevi
+      # uma camada 1b antes de enxergar isso; ela era redundante, e ainda por
+      # cima CEGA: usava `gh api compare`, que devolve no máximo 300 arquivos em
+      # ordem alfabética, e `supabase/migrations` cai fora do corte — medido, o
+      # compare do #965 devolve 300 arquivos e ZERO migrations, com cinco
+      # colisões reais. Achado do @Maestro PRs na revisão do #1268.
+      #
+      # O que sobra de verdade é o RUN envelhecer: o verify do #965 terminou em
+      # 16/09 e segue verde. Isso não se conserta dentro do job — quem fecha é o
+      # vigia periódico (.github/workflows/vigia-de-colisao.yml).
+
+      # E A ÁRVORE INTEIRA, fora de pull_request — porque lá o passo acima é
+      # INERTE: em push HEAD é a própria base, nada foi "acrescentado", e ele sai
+      # OK sem medir duplicata nenhuma.
+      #
+      # É nessa fresta que a duplicata entra: o verde de um PR é uma foto do
+      # passado. Medido em 19/09/2026, o #965 estava verde com prévia de 1039
+      # commits atrás e CINCO números já tomados — a guarda dele rodou contra uma
+      # `main` que já não existe. Se algo assim escapar (prévia velha, merge fora
+      # do fluxo, administrador que ignora o check), a `main` reprova na hora, em
+      # vez de a descoberta ser o `db push` de um self-hoster.
+      #
+      # Medido hoje na `main`: 263 migrations, zero duplicatas — nasce verde.
+      # Vigiado por tests/unit/main-sem-migration-duplicada.test.ts.
+      - name: A árvore da main tem NNNN ou timestamp repetido?
+        if: matrix.parte == 1 && github.event_name != 'pull_request'
+        run: |
+          set -uo pipefail
+          nomes="$(git ls-tree -r --name-only HEAD -- supabase/migrations | grep -E '\.sql$' | sed 's#.*/##')"
+          total="$(grep -c . <<<"$nomes" || true)"
+          # Controle de vivacidade: árvore sem migration nenhuma é sonda cega, não
+          # "está tudo certo". Medido em 19/09/2026: 263 arquivos.
+          if [ "${total:-0}" -lt 100 ]; then
+            echo "::error title=A varredura de duplicata não mediu nada::li ${total:-0} migration(ões) em supabase/migrations — a sonda perdeu o caminho."
+            exit 2
+          fi
+          dup_n="$(grep -oE '^[0-9]{14}_[0-9]{4}' <<<"$nomes" | cut -d_ -f2 | sort | uniq -d)"
+          dup_t="$(grep -oE '^[0-9]{14}' <<<"$nomes" | sort | uniq -d)"
+          if [ -n "$dup_n" ] || [ -n "$dup_t" ]; then
+            for n in $dup_n; do
+              echo "::error title=NNNN duplicado na árvore::${n} aparece em: $(grep -E "^[0-9]{14}_${n}_" <<<"$nomes" | tr '\n' ' ')"
+            done
+            for ts in $dup_t; do
+              echo "::error title=Timestamp duplicado na árvore::${ts} aparece em: $(grep -E "^${ts}_" <<<"$nomes" | tr '\n' ' ')"
+            done
+            echo "Conserto: renumerar o arquivo que entrou por último (NNNN e TIMESTAMP juntos) num PR de forward-fix — migration já aplicada não se edita."
+            exit 1
+          fi
+          echo "OK — ${total} migrations na árvore, nenhum NNNN nem timestamp repetido."
+
       # `--project produto` é o `pnpm test:unit` MENOS as cercas, que já
       # rodaram acima; `--shard` divide os arquivos entre as duas partes. Juntos
       # são a suíte inteira, uma vez só. Localmente o comando continua sendo
@@ -164,15 +285,58 @@ jobs:
         if: matrix.parte == 2
         run: pnpm test:shell
 
-      - name: Orçamento de tempo do verify
+      - name: Orçamento de tempo do verify-parte
         if: always()
         env:
-          # Orçamento em MINUTOS, POR PARTE. Era 16 com a suíte num job só
-          # (pior sucesso 14,9); a issue #1185 manda ele descer junto com a
-          # divisão — gate que não aperta depois do conserto fica cego. 12 é a
-          # estimativa de ~8,5 min da parte mais pesada (metade de 649 s de
-          # unit + typecheck + lint + cercas) com folga; NÃO MEDIDO até a
-          # primeira rodada das partes, e desce de novo quando for medido.
+          # Orçamento em MINUTOS, POR PARTE — o DETECTOR de crescimento da
+          # suíte. O teto (`timeout-minutes: 15`, no topo do job) é outra coisa:
+          # guarda de travamento.
+          #
+          # ── O 12 ERA DECLARADO; AGORA É MEDIDO ───────────────────────────
+          #
+          # Ele nasceu como estimativa ("~8,5 min da parte mais pesada... NÃO
+          # MEDIDO até a primeira rodada das partes"). Medido em 19/09/2026,
+          # sobre TODOS os jobs `verify-parte` das 240 rodadas completas de
+          # ci.yml criadas depois de as partes entrarem na main (18/09 18:37Z):
+          #
+          #     n=286 jobs que EXECUTARAM (260 success + 26 failure)
+          #     min 0,9 · mediana 7,2 · p90 8,6 · p95 8,8 · MÁX 9,6
+          #     acima de 10 min: ZERO.  acima de 12: ZERO.  acima de 15: ZERO.
+          #
+          #     parte 1/2 (cercas+typecheck+lint): mediana 8,3 · máx 9,6
+          #     parte 2/2 (kit bash):              mediana 7,0 · máx 7,5
+          #
+          # O 12 é máx+2,4, com 3 min até o teto — o detector dispara ANTES do
+          # corte, que é a propriedade que faz chegar um `::error::` legível em
+          # vez de um `cancelled` mudo. A estimativa acertou; agora ela tem
+          # número atrás.
+          #
+          # ── OS 100 CANCELADOS, E POR QUE ELES NÃO CENSURAM ESTA CONTA ────
+          #
+          # Descartar `cancelled` em silêncio é o erro que este bloco existe
+          # para não repetir, então: foram 100 no mesmo intervalo, e eu fui
+          # olhar o que eles eram. 87 têm ZERO passos — nunca rodaram, morreram
+          # esperando runner na fila; os 13 que executaram foram cortados no
+          # meio por push novo (`cancel-in-progress`), o mais longo com 6,5 min.
+          #
+          # NENHUM morreu no teto. A ausência deles não corta a cauda alta da
+          # distribuição (falta de runner não tem relação com a duração do
+          # job), então os 286 acima são amostra não-censurada — ao contrário
+          # do que aconteceu com o valor anterior deste campo.
+          #
+          # ⚠️ A LIÇÃO DE MÉTODO, que vale mais que o número: **teto e orçamento
+          # CENSURAM a medição que os calibra.** O valor que este campo teve
+          # antes (16, e depois 19) saiu de "pior sucesso 14,9" medido sob um
+          # teto de 15 — e sob aquele teto o job que passaria de 15 morria e
+          # entrava em `cancelled`, não em `success`. Era a distribuição dos
+          # SOBREVIVENTES tratada como a distribuição dos jobs. Nunca derive um
+          # destes dois números da distribuição medida sob o valor anterior:
+          # a cauda que interessa é exatamente a que o valor anterior cortou.
+          # Depois de mexer em qualquer um dos dois, ESPERE a distribuição nova,
+          # classifique os `cancelled` e só então recalibre.
+          #
+          # A catraca que impede este número de subir sem razão escrita está em
+          # tests/unit/preambulo-do-ci-nao-come-o-relogio.test.ts (`ORCAMENTOS`).
           ORCAMENTO_MIN: "12"
         run: |
           set -euo pipefail
@@ -224,6 +388,68 @@ jobs:
   # `TEST_DB_IMAGE`, a MESMA variável dos dois scripts, e o PADRÃO dela continua
   # sendo o piso (`scripts/test-db.sh`) — quem guarda isso é
   # tests/unit/baseline-no-piso-do-postgres.test.ts.
+  # QUAL MATRIZ DE MAJOR? A de cima sempre; a de PISO só quando o PR a alcança.
+  #
+  # `invariants-majors` roda o `test:db` inteiro uma vez por major. Medido de 15 a
+  # 18/09/2026: 1.658 min de runner por dia nas duas pernas, e 72% dos PRs não
+  # tocam schema, script de banco, kit nem invariante — nesses, a perna do piso
+  # mede a mesma coisa que a de cima, com outra versão de Postgres, sem chance de
+  # reprovar por razão de major. A regra e o porquê de cada caminho estão no
+  # cabeçalho de scripts/pr-mexe-no-piso-do-postgres.sh.
+  #
+  # O que a major de CIMA continua pegando em todo PR: RLS, governança e o
+  # vocabulário banco × TypeScript — nada disso depende da versão do Postgres.
+  # O piso existe por outra razão (issue #454): provar que o `baseline.sql` sobe
+  # na MENOR major que dizemos suportar.
+  #
+  # Fora de pull_request (push na `main`, tag, dispatch) a pergunta não é feita:
+  # as duas majors rodam sempre. Então toda mudança de schema é medida no piso no
+  # PR dela E de novo na árvore integrada — e o agregador EXIGE isso fora de PR.
+  #
+  # Roda nas máquinas do GitHub sempre: é de segundos e decide a matriz.
+  invariants-alcance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      majors: ${{ steps.alcance.outputs.majors }}
+      piso: ${{ steps.alcance.outputs.piso }}
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name == 'pull_request'
+        with:
+          sparse-checkout: scripts/pr-mexe-no-piso-do-postgres.sh
+          sparse-checkout-cone-mode: false
+
+      - name: O PR alcança o piso do Postgres?
+        id: alcance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          responde() {
+            echo "piso=$1" >> "$GITHUB_OUTPUT"
+            if [ "$1" = sim ]; then echo 'majors=["15","17"]' >> "$GITHUB_OUTPUT"
+            else echo 'majors=["17"]' >> "$GITHUB_OUTPUT"; fi
+            echo "piso=$1 ($2)"
+          }
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            responde sim "evento ${GITHUB_EVENT_NAME}"; exit 0
+          fi
+          if ! arquivos=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --jq '.[].filename'); then
+            echo "::warning::não consegui listar os arquivos do PR — roda as duas majors"
+            responde sim "lista indisponível"; exit 0
+          fi
+          n=$(printf '%s\n' "$arquivos" | grep -c . || true)
+          if [ "$n" -ge 3000 ]; then
+            responde sim "lista cortada em ${n}"; exit 0
+          fi
+          resposta=$(printf '%s\n' "$arquivos" | bash scripts/pr-mexe-no-piso-do-postgres.sh) || resposta=sim
+          [ "$resposta" = "nao" ] || resposta=sim
+          responde "$resposta" "${n} arquivo(s) no PR"
+
   invariants-majors:
     # Eram 20 min quando a perna tinha UMA passada; agora ela tem duas
     # (`test:db` + `test:db:update`) e o teto acompanha. O 30 é DECLARADO, não
@@ -234,6 +460,7 @@ jobs:
     # Executor próprio para trabalho nosso quando EXECUTOR_PROPRIO=ligado; o
     # porquê e a guarda contra fork: comentário do e2e-parte no e2e.yml.
     runs-on: ${{ vars.EXECUTOR_PROPRIO == 'ligado' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && 'deskcomm-proprio' || 'ubuntu-latest' }}
+    needs: [invariants-alcance]
     concurrency:
       group: ${{ github.workflow }}-invariants-majors-pg${{ matrix.pg }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -244,7 +471,9 @@ jobs:
       # que esta issue existe para fechar.
       fail-fast: false
       matrix:
-        pg: ["15", "17"]
+        # A lista vem do `invariants-alcance`: ["15","17"] sempre que o PR
+        # alcança o piso, e fora de pull_request; ["17"] no PR que não alcança.
+        pg: ${{ fromJSON(needs.invariants-alcance.outputs.majors) }}
     env:
       # Uma variável, os dois scripts: `scripts/test-db.sh` e
       # `scripts/test-update-com-dados.sh` leem esta para escolher a imagem.
@@ -281,16 +510,30 @@ jobs:
   # sempre um check que nenhum run produz, e NENHUM PR mergearia.
   invariants:
     if: always()
-    needs: [invariants-majors]
+    needs: [invariants-alcance, invariants-majors]
     runs-on: ubuntu-latest
     # Nenhuma permissão: este job só lê o resultado de `needs`.
     permissions: {}
     steps:
       - name: Falhar se qualquer major não passou
+        env:
+          EVENTO: ${{ github.event_name }}
+          PORTAO: ${{ needs.invariants-alcance.result }}
+          PISO: ${{ needs.invariants-alcance.outputs.piso }}
+          MAJORS: ${{ needs.invariants-majors.result }}
         run: |
-          echo "invariants-majors: ${{ needs.invariants-majors.result }}"
+          set -euo pipefail
+          echo "evento=${EVENTO} invariants-alcance=${PORTAO} piso=${PISO:-<vazio>}"
+          echo "invariants-majors: ${MAJORS}"
+          # A pergunta tem de ter sido RESPONDIDA: portão que falhou deixa a
+          # matriz `skipped`, e isso não pode ler como aprovação.
+          [ "$PORTAO" = "success" ]
+          # Fora de pull_request o piso é OBRIGATÓRIO: a `main` mede as duas.
+          if [ "$EVENTO" != "pull_request" ]; then
+            [ "$PISO" = "sim" ]
+          fi
           # `success` é o único desfecho aceito: o agregado de uma matrix só é
           # `success` com TODAS as pernas verdes, então uma major sozinha
           # reprovando derruba o check obrigatório. `skipped` também reprova, de
           # propósito — perna pulada não mediu nada.
-          [ "${{ needs.invariants-majors.result }}" = "success" ]
+          [ "$MAJORS" = "success" ]

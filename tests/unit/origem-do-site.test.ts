@@ -131,13 +131,14 @@ describe("a estampagem no contato", () => {
 
   it("grava pela fn_estampar_atribuicao_de_anuncio com a marca de primeiro toque", async () => {
     const { admin, chamadas } = bancoDeMentira();
-    const ok = await estamparOrigemDaPagina(admin, "contato-1", {
+    const ok = await estamparOrigemDaPagina(admin, "org-1", "contato-1", {
       utm: { utm_source: "instagram", gclid: "Cj0KCQjw" },
       capturadaEm: "2026-09-14T10:00:00.000Z",
     });
     expect(ok).toBe(true);
     expect(chamadas).toHaveLength(1);
     expect(chamadas[0]).toMatchObject({
+      p_org: "org-1",
       p_contact: "contato-1",
       p_platform: "site",
       p_metadata: {
@@ -152,7 +153,7 @@ describe("a estampagem no contato", () => {
   it("devolve false e não lança quando o banco recusa", async () => {
     const { admin } = bancoDeMentira({ message: "permission denied" });
     await expect(
-      estamparOrigemDaPagina(admin, "contato-1", { utm: { utm_source: "ig" }, capturadaEm: null }),
+      estamparOrigemDaPagina(admin, "org-1", "contato-1", { utm: { utm_source: "ig" }, capturadaEm: null }),
     ).resolves.toBe(false);
   });
 });
@@ -170,10 +171,11 @@ describe("o teto de tamanho do código", () => {
     `[dk1:${Buffer.from(JSON.stringify({ [chave]: valor }), "utf8").toString("base64url")}]`;
 
   it("o gerador recusa o que não caberia, em vez de emitir um link que não funciona", () => {
-    // As dez chaves no teto de valor, com texto de quatro bytes por caractere:
-    // 10868 caracteres de código, muito acima do teto. A página recebe `null` e
-    // sabe que não há link — melhor do que um link que a ingestão ignoraria
-    // calada.
+    // As dez chaves no teto de valor, com texto de quatro bytes por caractere.
+    // O gerador corta cada valor em 200 unidades UTF-16 antes de montar — cada
+    // 🚀 ocupa duas, então sobram 100 por chave —, e o código fica com 5535
+    // caracteres, muito acima do teto. A página recebe `null` e sabe que não há
+    // link — melhor do que um link que a ingestão ignoraria calada.
     const gigante = Object.fromEntries(
       CHAVES_DE_UTM.map((chave) => [chave, "🚀".repeat(200)]),
     );

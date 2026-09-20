@@ -38,6 +38,7 @@ import {
 // Repetir a URL aqui criaria dois lugares para consertar quando ela mudar.
 import {
   cabecalhosDeAtribuicaoOpenRouter,
+  DEEPSEEK_ENDPOINT,
   OPENROUTER_ENDPOINT,
 } from "@/lib/agent-engine/edge/llm/providers";
 import { CredentialUnavailableError, loadCredential } from "@/lib/ai/credentials";
@@ -193,6 +194,12 @@ export function buildModel(provider: string, apiKey: string, modelId: string): L
         baseURL: OPENROUTER_ENDPOINT,
         headers: cabecalhosDeAtribuicaoOpenRouter(),
       })(modelId);
+    // Mesma fábrica OpenAI-compatível que o registry de produção usa. Sem este
+    // caso, o dono que publicou em DeepSeek receberia `unsupported_provider` no
+    // ensaio enquanto o worker responderia a mensagem real — ensaio mais
+    // rígido que a produção mente sobre o que está quebrado.
+    case "deepseek":
+      return createOpenAI({ apiKey, baseURL: DEEPSEEK_ENDPOINT })(modelId);
     default:
       throw new Error(`unsupported_provider: ${provider}`);
   }

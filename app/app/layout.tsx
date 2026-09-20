@@ -6,6 +6,7 @@ import { isMfaEnrolled, loadAuthUser, requiresMfa, resolveActiveOrg } from "@/li
 import { DEFAULT_VISIBILITY_MODE, roleAtLeast, type VisibilityMode } from "@/lib/auth/types";
 import { clientePelaAgendaLigado } from "@/lib/schemas/settings";
 import { AuthProvider } from "@/hooks/auth/AuthProvider";
+import { ProvedorDeCoresDasEtiquetas } from "@/components/tags/CoresDasEtiquetas";
 import { AppShell } from "./_components/AppShell";
 import { EstiloDaMarcaDaOrganizacao } from "./_components/EstiloDaMarcaDaOrganizacao";
 import { MfaEnrollGate } from "@/components/auth/MfaEnrollGate";
@@ -19,6 +20,7 @@ import { ConexaoCaidaBanner } from "@/components/app/ConexaoCaidaBanner";
 import { IdiomaProvider } from "@/lib/i18n/IdiomaProvider";
 import { listarConexoesCaidas, type ConexaoCaida } from "@/lib/channels/health";
 import { VoiceCallProvider } from "@/components/voice/VoiceCallContext";
+import { ProvedorDaOcupacaoDoRodape } from "@/lib/ui/rodape-ocupado";
 import { acessoFoiRevogado } from "@/lib/auth/vinculo-revogado";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -212,15 +214,22 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       }
     : null;
 
+  // O CONTRATO DE OCUPAÇÃO DO RODAPÉ (issue #1305) envolve a casca E as peças de
+  // voz. O `VoiceCallProvider` desenha o painel de chamada DEPOIS dos children,
+  // ou seja: o painel é IRMÃO do `AppShell`, não filho dele. Um provedor por
+  // dentro do `VoiceCallProvider` deixaria o painel de fora — ele declararia o
+  // que ocupa e ninguém descontaria, que é exatamente o defeito da #1305.
   const shell = (
-    <VoiceCallProvider>
-      <AppShell
-        sidebarCollapsed={collapsed}
-        podeAtender={Boolean(activeOrg && roleAtLeast(activeOrg.role, "agent"))}
-      >
-        {children}
-      </AppShell>
-    </VoiceCallProvider>
+    <ProvedorDaOcupacaoDoRodape>
+      <VoiceCallProvider>
+        <AppShell
+          sidebarCollapsed={collapsed}
+          podeAtender={Boolean(activeOrg && roleAtLeast(activeOrg.role, "agent"))}
+        >
+          {children}
+        </AppShell>
+      </VoiceCallProvider>
+    </ProvedorDaOcupacaoDoRodape>
   );
 
   return (
@@ -229,35 +238,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // acoplamento com a autenticação que derrubou 32 casos.
     <IdiomaProvider locale={user.idioma}>
       <AuthProvider user={user} activeOrg={activeOrg}>
-        <InterfaceRefresh userId={user.id} org={activeOrg} support={!!user.support} />
-        {/*
-        O MARCADOR da marca da organização — o elemento cuja existência define o
-        escopo `body:has([data-marca-org])` (lib/branding/css.ts).
-
-        `contents` não gera caixa: no box tree os filhos continuam sendo filhos
-        diretos do `<body>`, então nada de layout, `position` ou `flex` muda. O
-        que este elemento existe para fazer é EXISTIR — e sumir junto com esta
-        subárvore quando o logout navega para `/login`.
-
-        Envolve TUDO, e não a div do `AppShell`, porque aquela div é irmã dos dois
-        banners e é SUBSTITUÍDA quando o `MfaEnrollGate` bloqueia (ele renderiza
-        um `fixed inset-0` no lugar dos children). O admin de tenant recém-criado
-        veria a tela de cadastro de MFA — a PRIMEIRA tela dele — com a cor da
-        instalação, e depois o resto do produto com a dele.
-      */}
-        <div data-marca-org="" className="contents">
-          <EstiloDaMarcaDaOrganizacao css={cssDaOrganizacao} />
-          <ImpersonateBanner impersonating={impersonating} />
-          <ConexaoCaidaBanner caidas={conexoesCaidas} />
-          {needsMfaGate ? (
-            // Gate always mounted for MFA-required roles; it latches the blocking
-            // decision client-side so the enroll Server Action's revalidation
-            // can't tear down the recovery-codes screen mid-flow.
-            <MfaEnrollGate enrolled={enrolled}>{shell}</MfaEnrollGate>
-          ) : (
-            shell
-          )}
-        </div>
+        <ProvedorDeCoresDasEtiquetas>
+          <InterfaceRefresh userId={user.id} org={activeOrg} support={!!user.support} />
+          <div data-marca-org="" className="contents">
+            <EstiloDaMarcaDaOrganizacao css={cssDaOrganizacao} />
+            <ImpersonateBanner impersonating={impersonating} />
+            <ConexaoCaidaBanner caidas={conexoesCaidas} />
+            {needsMfaGate ? (
+              <MfaEnrollGate enrolled={enrolled}>{shell}</MfaEnrollGate>
+            ) : (
+              shell
+            )}
+          </div>
+        </ProvedorDeCoresDasEtiquetas>
       </AuthProvider>
     </IdiomaProvider>
   );

@@ -9,6 +9,11 @@
 #
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
+# Um GIT_DIR herdado (suíte rodada de dentro de um hook ou de um `rebase --exec`)
+# manda por cima de todo `cd`/`git -C` dos repositórios descartáveis abaixo, e a
+# escrita cai no repositório de quem roda. Zerar o ambiente local do git é o
+# idioma canônico do próprio git para isso.
+unset $(git rev-parse --local-env-vars)
 
 # O _common.sh vem antes porque é dele que saem `nome_do_projeto_compose`,
 # `veredito_rede_do_proxy` e `garantir_rede_do_proxy` — o install.sh e o update.sh
@@ -1690,7 +1695,13 @@ montar_vps() {
   # ele no sandbox, aquele `bash` falhava, o `|| true` engolia, e todo cenário
   # media uma instalação em que o passo dos e-mails de acesso simplesmente não
   # aconteceu — o elo mais fácil de quebrar sem ninguém ver.
-  cp install.sh update.sh backup.sh _common.sh marca-emails.sh "$raiz/"
+  # `manutencao.sh` e a pasta `manutencao/` entram pela MESMA razao, e a lista
+  # acima nasceu curta duas vezes: o `update.sh` os carrega com `source` DURO, no
+  # topo, igual ao `_common.sh`. Sem eles aqui, o script morre na LINHA 21 — antes
+  # de qualquer mensagem — e todo cenario reporta "o update.sh nao chegou ao
+  # banco / ao fim / ao up -d", que le como defeito do produto e e cenario faltando.
+  cp install.sh update.sh backup.sh _common.sh marca-emails.sh manutencao.sh "$raiz/"
+  cp -R manutencao "$raiz/"
   : > "$VPS_PROJ/docker-compose.prod.yml"
   cat > "$raiz/bin/docker"
   # Só o v_supabase_url exige resposta online (000 reprova); os outros toleram.
@@ -2020,8 +2031,7 @@ echo "packaging: a instalação resolve a última versão publicada"
   git clone --quiet "$repo_falso/origem.git" "$trabalho/w" 2>/dev/null
   (
     cd "$trabalho/w" || exit 1
-    git config user.email t@t; git config user.name t
-    echo x > a; git add -A; git commit --quiet -m init
+    echo x > a; git add -A; git -c user.email=t@t -c user.name=t commit --quiet -m init
     for t in v1.0.0 v1.9.0 v1.10.0 v1.2.0; do git tag "$t"; done
     git push --quiet origin HEAD --tags 2>/dev/null
   )
@@ -2062,8 +2072,7 @@ TMP_PIN="$(mktemp -d)"
     cd "$TMP_PIN" || exit 1
     git clone --quiet "$origem" w 2>/dev/null
     cd w || exit 1
-    git config user.email t@t; git config user.name t
-    echo x > a; git add -A; git commit --quiet -m init
+    echo x > a; git add -A; git -c user.email=t@t -c user.name=t commit --quiet -m init
     for t in v1.0.0 v1.9.0 v1.10.0; do git tag "$t"; done
     git push --quiet origin HEAD --tags 2>/dev/null
   )
