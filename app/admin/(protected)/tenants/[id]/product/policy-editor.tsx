@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { MODULES, PROFILES, type Decision } from "@/lib/product/capabilities";
+import { MODULES, PROFILES, type Decision, type FeatureFlag } from "@/lib/product/capabilities";
 import { productPolicySchema, type ProductPolicy } from "@/lib/product/policy";
 export function ProductPolicyEditor({
   organizationId,
@@ -20,6 +20,22 @@ export function ProductPolicyEditor({
   const [message, setMessage] = useState("");
   const [decisions, setDecisions] = useState<Record<string, Decision>>(initialDecisions);
   const url = `/api/v1/admin/tenants/${organizationId}/product`;
+  function updateFlag(index: number, patch: Partial<FeatureFlag>) {
+    if (!policy) return;
+    setPolicy({
+      ...policy,
+      flags: policy.flags.map((flag, current) =>
+        current === index ? { ...flag, ...patch } : flag,
+      ),
+    });
+  }
+  function list(value: string): string[] | undefined {
+    const values = value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return values.length ? values : undefined;
+  }
   async function load() {
     setBusy(true);
     try {
@@ -214,6 +230,136 @@ export function ProductPolicyEditor({
               </p>
             </div>
           ))}
+        </fieldset>
+        <fieldset className="space-y-3">
+          <legend className="font-medium">Liberações graduais</legend>
+          <label className="flex gap-2">
+            <input
+              type="checkbox"
+              checked={policy.experimental_opt_in}
+              onChange={(e) => setPolicy({ ...policy, experimental_opt_in: e.target.checked })}
+            />
+            Aceitar funcionalidades experimentais nesta organização
+          </label>
+          {policy.flags.map((flag, index) => (
+            <div className="space-y-3 rounded-lg border p-3" key={`${flag.key}-${index}`}>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="grid gap-1">
+                  Chave
+                  <input
+                    className="rounded-md border bg-background p-2"
+                    value={flag.key}
+                    onChange={(e) => updateFlag(index, { key: e.target.value })}
+                  />
+                </label>
+                <label className="grid gap-1">
+                  Liberação (%)
+                  <input
+                    className="rounded-md border bg-background p-2"
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={flag.percentage}
+                    onChange={(e) => updateFlag(index, { percentage: Number(e.target.value) })}
+                  />
+                </label>
+                <label className="grid gap-1">
+                  Planos (separados por vírgula)
+                  <input
+                    className="rounded-md border bg-background p-2"
+                    value={flag.plans?.join(", ") ?? ""}
+                    onChange={(e) => updateFlag(index, { plans: list(e.target.value) })}
+                  />
+                </label>
+                <label className="grid gap-1 sm:col-span-2">
+                  Organizações UUID (separadas por vírgula)
+                  <input
+                    className="rounded-md border bg-background p-2"
+                    value={flag.organizations?.join(", ") ?? ""}
+                    onChange={(e) => updateFlag(index, { organizations: list(e.target.value) })}
+                  />
+                </label>
+                <label className="grid gap-1">
+                  Perfis
+                  <select
+                    className="rounded-md border bg-background p-2"
+                    multiple
+                    value={flag.profiles ?? []}
+                    onChange={(e) =>
+                      updateFlag(index, {
+                        profiles: Array.from(e.target.selectedOptions).map(
+                          (option) => option.value as (typeof PROFILES)[number],
+                        ),
+                      })
+                    }
+                  >
+                    {PROFILES.map((profile) => (
+                      <option key={profile}>{profile}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                <label className="flex gap-2">
+                  <input
+                    type="checkbox"
+                    checked={flag.enabled}
+                    onChange={(e) => updateFlag(index, { enabled: e.target.checked })}
+                  />
+                  Ativa
+                </label>
+                <label className="flex gap-2">
+                  <input
+                    type="checkbox"
+                    checked={flag.experimental}
+                    onChange={(e) => updateFlag(index, { experimental: e.target.checked })}
+                  />
+                  Experimental
+                </label>
+                <label className="flex gap-2">
+                  <input
+                    type="checkbox"
+                    checked={flag.platform_only}
+                    onChange={(e) => updateFlag(index, { platform_only: e.target.checked })}
+                  />
+                  Só plataforma
+                </label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    setPolicy({
+                      ...policy,
+                      flags: policy.flags.filter((_, current) => current !== index),
+                    })
+                  }
+                >
+                  Remover
+                </Button>
+              </div>
+            </div>
+          ))}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() =>
+              setPolicy({
+                ...policy,
+                flags: [
+                  ...policy.flags,
+                  {
+                    key: `feature.${policy.flags.length + 1}`,
+                    enabled: false,
+                    percentage: 100,
+                    platform_only: false,
+                    experimental: false,
+                  },
+                ],
+              })
+            }
+          >
+            Adicionar liberação
+          </Button>
         </fieldset>
         <p role="status">{message}</p>
         <Button type="submit" disabled={busy}>

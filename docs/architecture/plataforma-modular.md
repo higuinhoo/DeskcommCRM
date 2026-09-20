@@ -24,6 +24,12 @@ auditoria limitada às últimas 20 operações, integrações aos últimos 20 re
 p95 de IA do mês UTC. Ausência de dados e falhas de consulta têm estados distintos. Não expõe
 conteúdo de conversa, prompts, credenciais ou payloads de webhook.
 
+A interface simples entra por `/app/home` e resume o estado publicado do assistente, conversas
+que pedem atenção, próximos compromissos e configuração pendente. O editor administrativo expõe
+as regras graduais já resolvidas por plano, perfil, organização, percentual e opt-in experimental.
+O painel de saúde também verifica Google Agenda, credenciais de IA, banco, filas, webhooks e
+storage; o teste manual apenas relê sinais seguros e não altera a operação.
+
 Living System Checklist:
 1. Entrada: política persistente, sessão autenticada, versões existentes e telemetria real.
 2. Saída: navegação/guards, runtime publicado e diagnóstico do operador.
@@ -37,6 +43,6 @@ Living System Checklist:
 10. Mapa: este documento liga política → resolvedor → guards/interface; config → versão → runtime;
 telemetria → diagnóstico → correção administrativa.
 
-Pendências: laboratório sintético, home e navegação estritamente em cinco áreas, cobertura completa
-de vocabulário, provisionamento guiado sem editor técnico, enforcement de módulos em workers/MCP,
+Pendências: laboratório sintético, cobertura completa de vocabulário,
+provisionamento guiado sem editor técnico, enforcement de módulos em workers/MCP,
 testes completos de integração/tela e implantação. Nenhuma destas partes é declarada concluída.

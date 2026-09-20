@@ -105,6 +105,14 @@ export const GRUPO_NO_RODAPE: NavGroupId = "organizacao";
 export const NAV_CATALOG = [
   // ---- Atendimento — onde o operador passa o dia ----
   {
+    href: "/app/home",
+    label: "Início",
+    description: "Resumo do assistente, conversas que pedem atenção e próximos compromissos.",
+    icon: "House",
+    group: "atendimento",
+    sidebar: true,
+  },
+  {
     href: "/app/inbox",
     label: "Inbox",
     description: "As conversas de WhatsApp, com você e a IA atendendo lado a lado.",
@@ -324,7 +332,8 @@ export const NAV_CATALOG = [
   {
     href: "/app/assistant",
     label: "Meu Assistente",
-    description: "Configure o assistente de IA em linguagem simples: tom, serviços, limites e autonomia.",
+    description:
+      "Configure o assistente de IA em linguagem simples: tom, serviços, limites e autonomia.",
     icon: "Sparkle",
     group: "ia",
     section: "Montar o agente",

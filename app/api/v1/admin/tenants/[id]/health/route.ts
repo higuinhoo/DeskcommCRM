@@ -54,6 +54,28 @@ export interface TenantHealthResponse {
     lag_seconds: number | null;
     status: HealthStatus;
   };
+  calendar: {
+    connected: boolean;
+    connections: number;
+    last_sync_at: string | null;
+    has_error: boolean;
+    status: HealthStatus;
+  };
+  providers: {
+    configured: number;
+    active: number;
+    names: string[];
+    has_error: boolean;
+    status: HealthStatus;
+  };
+  operations: {
+    database: HealthStatus;
+    queue_pending: number;
+    queue_dead: number;
+    webhook_failures: number;
+    storage: HealthStatus;
+    status: HealthStatus;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -65,9 +87,7 @@ function wahaOverallStatus(sessions: WahaSession[]): HealthStatus {
   // `channel_sessions_status_check` só admite STARTING/SCAN_QR_CODE/WORKING/
   // STOPPED/FAILED. Comparar com "CONNECTED" (que não existe) era um ramo morto.
   const hasWorking = sessions.some((s) => s.status === "WORKING");
-  const hasFailed = sessions.some(
-    (s) => s.status === "FAILED" || s.status === "STOPPED",
-  );
+  const hasFailed = sessions.some((s) => s.status === "FAILED" || s.status === "STOPPED");
   if (hasFailed && !hasWorking) return "critical";
   if (!hasWorking) return "warning";
   return "ok";
@@ -145,10 +165,7 @@ function nuvemshopOverallStatus(
  * `critical` treinaria o operador a ignorar a cor exatamente onde ela precisa
  * ser crível. Os valores continuam visíveis na tela; o que muda é o alarme.
  */
-function aiOverallStatus(
-  percentUsed: number | null,
-  modo: ModoDeOrcamento,
-): HealthStatus {
+function aiOverallStatus(percentUsed: number | null, modo: ModoDeOrcamento): HealthStatus {
   if (percentUsed === null || modo === "off") return "ok";
   // Só quem escolheu PARAR chega a `critical`: em `avisar`, cruzar o teto custa
   // dinheiro mas não interrompe atendimento nenhum.
@@ -160,7 +177,7 @@ function aiOverallStatus(
 function auditOverallStatus(lagSeconds: number | null): HealthStatus {
   if (lagSeconds === null) return "warning";
   if (lagSeconds > 600) return "critical"; // > 10 min
-  if (lagSeconds > 120) return "warning";  // > 2 min
+  if (lagSeconds > 120) return "warning"; // > 2 min
   return "ok";
 }
 
@@ -168,10 +185,7 @@ function auditOverallStatus(lagSeconds: number | null): HealthStatus {
 // GET /api/v1/admin/tenants/[id]/health
 // ---------------------------------------------------------------------------
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const requestId = randomUUID();
   const { id } = await params;
 
@@ -184,9 +198,21 @@ export async function GET(
 
   const admin = createAdminClient();
 
-  // 5 parallel queries — service-role, intentional cross-tenant reads.
+  // Consultas paralelas — service-role, intentional cross-tenant reads.
   // organization_id is resolved from path (trusted), never from body.
-  const [wahaRes, nuvemshopRes, aiRes, gastoRes, auditRes] = await Promise.all([
+  const [
+    wahaRes,
+    nuvemshopRes,
+    aiRes,
+    gastoRes,
+    auditRes,
+    calendarRes,
+    providersRes,
+    queuePendingRes,
+    queueDeadRes,
+    webhookFailuresRes,
+    bucketsRes,
+  ] = await Promise.all([
     admin
       .from("channel_sessions")
       // `last_qr_at` não existe em channel_sessions; o equivalente real é
@@ -224,6 +250,36 @@ export async function GET(
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
+
+    admin
+      .from("calendar_connections")
+      .select("status, last_sync_at, last_sync_error")
+      .eq("organization_id", id),
+
+    admin
+      .from("ai_provider_credentials")
+      .select("provider, is_active, validated_at, validation_error")
+      .eq("organization_id", id),
+
+    admin
+      .from("event_log")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", id)
+      .in("status", ["pending", "processing"]),
+
+    admin
+      .from("event_log")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", id)
+      .eq("status", "dead"),
+
+    admin
+      .from("webhook_events_log")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", id)
+      .in("status", ["error", "dead"]),
+
+    admin.storage.listBuckets(),
   ]);
 
   // --- WAHA ---
@@ -248,9 +304,7 @@ export async function GET(
   const nuConnected = classificarNuvemshop(nuRowStatus).vinculada;
   const nuExpiresAt = nuRow?.expires_at ?? null;
   const nuDaysUntilExpiry = nuExpiresAt
-    ? Math.floor(
-        (new Date(nuExpiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
-      )
+    ? Math.floor((new Date(nuExpiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
     : null;
   const nuStatus = nuvemshopOverallStatus(nuRowStatus, nuDaysUntilExpiry);
 
@@ -277,9 +331,7 @@ export async function GET(
   const budgetCents = firstAiRow ? (firstAiRow.monthly_limit_cents ?? null) : null;
   const enforcementMode = normalizarModoDeOrcamento(firstAiRow?.enforcement_mode ?? null);
   const percentUsed =
-    budgetCents && budgetCents > 0
-      ? Math.round((consumedCents / budgetCents) * 100)
-      : null;
+    budgetCents && budgetCents > 0 ? Math.round((consumedCents / budgetCents) * 100) : null;
   const aiStatus = aiOverallStatus(percentUsed, enforcementMode);
 
   // --- Audit lag ---
@@ -288,6 +340,70 @@ export async function GET(
     ? Math.round((Date.now() - new Date(lastAuditAt).getTime()) / 1000)
     : null;
   const auditStatus = auditOverallStatus(lagSeconds);
+
+  type CalendarRow = {
+    status: string;
+    last_sync_at: string | null;
+    last_sync_error: string | null;
+  };
+  const calendarRows = (calendarRes.data ?? []) as CalendarRow[];
+  const healthyCalendar = calendarRows.some((row) => row.status === "healthy");
+  const calendarHasError = calendarRows.some(
+    (row) =>
+      !!row.last_sync_error || ["token_expired", "scope_missing", "error"].includes(row.status),
+  );
+  const calendarStatus: HealthStatus = calendarHasError
+    ? "critical"
+    : healthyCalendar
+      ? "ok"
+      : "warning";
+  const lastCalendarSync =
+    calendarRows
+      .map((row) => row.last_sync_at)
+      .filter((value): value is string => !!value)
+      .sort()
+      .at(-1) ?? null;
+
+  type ProviderRow = {
+    provider: string;
+    is_active: boolean;
+    validated_at: string | null;
+    validation_error: string | null;
+  };
+  const providerRows = (providersRes.data ?? []) as ProviderRow[];
+  const activeProviders = providerRows.filter((row) => row.is_active);
+  const providersHaveError = activeProviders.some(
+    (row) => !!row.validation_error || !row.validated_at,
+  );
+  const providersStatus: HealthStatus = providersHaveError
+    ? "critical"
+    : activeProviders.length > 0
+      ? "ok"
+      : "warning";
+
+  const databaseStatus: HealthStatus = [
+    wahaRes,
+    nuvemshopRes,
+    aiRes,
+    auditRes,
+    calendarRes,
+    providersRes,
+    queuePendingRes,
+    queueDeadRes,
+    webhookFailuresRes,
+  ].some((result) => result.error)
+    ? "critical"
+    : "ok";
+  const queuePending = queuePendingRes.count ?? 0;
+  const queueDead = queueDeadRes.count ?? 0;
+  const webhookFailures = webhookFailuresRes.count ?? 0;
+  const storageStatus: HealthStatus = bucketsRes.error ? "critical" : "ok";
+  const operationsStatus: HealthStatus =
+    databaseStatus === "critical" || storageStatus === "critical" || queueDead > 0
+      ? "critical"
+      : queuePending > 100 || webhookFailures > 0
+        ? "warning"
+        : "ok";
 
   const health: TenantHealthResponse = {
     waha: { sessions, overall_status: wahaStatus },
@@ -311,6 +427,28 @@ export async function GET(
       last_at: lastAuditAt,
       lag_seconds: lagSeconds,
       status: auditStatus,
+    },
+    calendar: {
+      connected: healthyCalendar,
+      connections: calendarRows.length,
+      last_sync_at: lastCalendarSync,
+      has_error: calendarHasError,
+      status: calendarStatus,
+    },
+    providers: {
+      configured: providerRows.length,
+      active: activeProviders.length,
+      names: [...new Set(activeProviders.map((row) => row.provider))].sort(),
+      has_error: providersHaveError,
+      status: providersStatus,
+    },
+    operations: {
+      database: databaseStatus,
+      queue_pending: queuePending,
+      queue_dead: queueDead,
+      webhook_failures: webhookFailures,
+      storage: storageStatus,
+      status: operationsStatus,
     },
   };
 

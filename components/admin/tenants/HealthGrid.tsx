@@ -8,6 +8,9 @@ import {
   Storefront,
   Brain,
   ClipboardText,
+  CalendarBlank,
+  Key,
+  Gauge,
 } from "@/lib/ui/icons";
 import type { TenantHealthResponse } from "@/app/api/v1/admin/tenants/[id]/health/route";
 import { useT } from "@/hooks/i18n/useT";
@@ -57,7 +60,7 @@ interface HealthGridProps {
 export function HealthGrid({ health }: HealthGridProps) {
   const tagDoIdioma = useTagDeIdioma();
   const t = useT();
-  const { waha, nuvemshop, ai, audit } = health;
+  const { waha, nuvemshop, ai, audit, calendar, providers, operations } = health;
 
   // WAHA card
   // Vocabulário real de channel_sessions.status: STARTING/SCAN_QR_CODE/WORKING/
@@ -141,6 +144,42 @@ export function HealthGrid({ health }: HealthGridProps) {
         icon={<ClipboardText size={18} aria-hidden />}
         primaryValue={auditPrimary}
         details={auditDetails}
+      />
+
+      <HealthCard
+        title="Google Agenda"
+        status={calendar.status}
+        icon={<CalendarBlank size={18} aria-hidden />}
+        primaryValue={calendar.connected ? "Conectado" : "Não conectado"}
+        details={[
+          { label: "Conexões", value: String(calendar.connections) },
+          { label: "Última sync", value: formatDate(calendar.last_sync_at, tagDoIdioma) },
+        ]}
+      />
+
+      <HealthCard
+        title="Provedores de IA"
+        status={providers.status}
+        icon={<Key size={18} aria-hidden />}
+        primaryValue={`${providers.active}/${providers.configured} ativos`}
+        details={[
+          { label: "Provedores", value: providers.names.join(", ") || "—" },
+          { label: "Erro de validação", value: providers.has_error ? "Sim" : "Não" },
+        ]}
+      />
+
+      <HealthCard
+        title="Operação"
+        status={operations.status}
+        icon={<Gauge size={18} aria-hidden />}
+        primaryValue={operations.status === "ok" ? "Saudável" : "Requer atenção"}
+        details={[
+          { label: "Banco", value: operations.database },
+          { label: "Fila pendente", value: String(operations.queue_pending) },
+          { label: "Fila morta", value: String(operations.queue_dead) },
+          { label: "Webhooks com falha", value: String(operations.webhook_failures) },
+          { label: "Storage", value: operations.storage },
+        ]}
       />
     </div>
   );

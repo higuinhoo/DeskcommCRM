@@ -39,12 +39,11 @@ const DIA = 24 * 60 * 60 * 1000;
 
 function thenable(value: unknown) {
   const builder: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "order", "limit"]) {
+  for (const m of ["select", "eq", "in", "order", "limit"]) {
     builder[m] = () => builder;
   }
   builder.maybeSingle = async () => value;
-  builder.then = (resolve: (v: unknown) => unknown) =>
-    Promise.resolve(value).then(resolve);
+  builder.then = (resolve: (v: unknown) => unknown) => Promise.resolve(value).then(resolve);
   return builder;
 }
 
@@ -70,8 +69,13 @@ function makeAdminStub(nuvemshop: { status: string; expires_at: string | null } 
       }
       if (table === "ai_budgets") return thenable({ data: [], error: null });
       if (table === "api_audit_log") return thenable({ data: null, error: null });
+      if (table === "calendar_connections") return thenable({ data: [], error: null });
+      if (table === "ai_provider_credentials") return thenable({ data: [], error: null });
+      if (table === "event_log") return thenable({ data: null, error: null, count: 0 });
+      if (table === "webhook_events_log") return thenable({ data: null, error: null, count: 0 });
       throw new Error(`unexpected table ${table}`);
     },
+    storage: { listBuckets: async () => ({ data: [], error: null }) },
     // `fn_gasto_de_ia_do_mes` (migration 0159) — a régua ÚNICA de gasto, a mesma
     // que o gate consulta antes de recusar uma chamada de LLM. O painel a chama
     // porque a coluna materializada soma sem olhar a data e nunca zera.
@@ -82,15 +86,12 @@ function makeAdminStub(nuvemshop: { status: string; expires_at: string | null } 
   };
 }
 
-async function chamar(
-  nuvemshop: { status: string; expires_at: string | null } | null,
-) {
+async function chamar(nuvemshop: { status: string; expires_at: string | null } | null) {
   vi.mocked(createAdminClient).mockReturnValue(makeAdminStub(nuvemshop) as never);
   const { GET } = await import("./route");
-  const res = await GET(
-    new NextRequest(`http://localhost/api/v1/admin/tenants/${ORG_ID}/health`),
-    { params: Promise.resolve({ id: ORG_ID }) },
-  );
+  const res = await GET(new NextRequest(`http://localhost/api/v1/admin/tenants/${ORG_ID}/health`), {
+    params: Promise.resolve({ id: ORG_ID }),
+  });
   const body = (await res.json()) as {
     data: { nuvemshop: { connected: boolean; status: HealthStatus } };
   };
@@ -135,9 +136,7 @@ describe("GET /api/v1/admin/tenants/[id]/health — Nuvemshop", () => {
 });
 
 describe("GET /api/v1/admin/tenants/[id]/health — cobertura do vocabulário", () => {
-  const STATUS_NO_BANCO = valoresDoCheckNoBaseline(
-    "tenant_integrations_status_check",
-  );
+  const STATUS_NO_BANCO = valoresDoCheckNoBaseline("tenant_integrations_status_check");
 
   it("todo status que o banco aceita está classificado na rota", () => {
     for (const status of STATUS_NO_BANCO) {
