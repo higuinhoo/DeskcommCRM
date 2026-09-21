@@ -439,9 +439,9 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
                   <div>
                     <span className="text-sm font-medium">{AUTONOMY_LABELS[level]}</span>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {level === "full" && "Responde dúvidas, realiza consultas e conduz o atendimento de forma independente."}
-                      {level === "assisted" && "Responde dúvidas simples e aciona humanos rapidamente em casos específicos."}
-                      {level === "strict" && "Apenas fornece informações estritas já pré-definidas na base."}
+                      {level === "automatic" && "Responde dúvidas, realiza consultas e conduz o atendimento de forma independente."}
+                      {level === "hybrid" && "Responde dúvidas rotineiras e transfere para a equipe humana em assuntos sensíveis."}
+                      {level === "suggest_only" && "A IA apenas redige sugestões no painel; nenhuma mensagem sai sem clique humano."}
                     </p>
                   </div>
                 </label>
