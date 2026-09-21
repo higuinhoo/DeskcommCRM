@@ -103,7 +103,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx): Promise<Response> {
   if ((existing as { assistant_config?: unknown }).assistant_config != null) {
     return fail("version_immutable", t("Esta versão foi gerada pelo assistente guiado e não pode ser editada diretamente. Crie um novo rascunho."), 409, {
       requestId,
-      code: "assistant_create_new_draft",
+      details: { code: "assistant_create_new_draft" },
     });
   }
 
