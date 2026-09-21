@@ -23,6 +23,7 @@ import { TAG_DE_CLIENTE } from "@/lib/contacts/cliente";
 import { useActiveOrg } from "@/hooks/auth/AuthProvider";
 import { MergeDialog } from "@/components/contacts/MergeDialog";
 import { EmptyContacts } from "@/components/empty";
+import { useBusinessVocabulary } from "@/hooks/useBusinessVocabulary";
 import type { ContactOrderBy } from "@/lib/schemas/contacts";
 
 const SOURCE_OPTIONS = [
@@ -46,6 +47,7 @@ const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 
 export function ContactsListClient() {
   const t = useT();
+  const vocab = useBusinessVocabulary();
   const clientesLigado = useActiveOrg()?.cliente_pela_agenda === true;
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -104,9 +106,9 @@ export function ContactsListClient() {
     <div className="space-y-4 p-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight">{t("Contatos")}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{t(vocab.contacts)}</h1>
           <p className="text-sm text-muted-foreground">
-            {t("Customer 360 — busque, filtre e gerencie contatos.")}
+            {t("Customer 360 — busque, filtre e gerencie")} {vocab.contacts.toLowerCase()}.
           </p>
         </div>
         {/*
@@ -131,7 +133,7 @@ export function ContactsListClient() {
           </Button>
           <Button onClick={() => setCreateOpen(true)}>
             <Plus size={16} weight="bold" aria-hidden />
-            <span>{t("Novo contato")}</span>
+            <span>{t(`Novo(a) ${vocab.contact_singular.toLowerCase()}`)}</span>
           </Button>
         </div>
       </header>
@@ -145,7 +147,7 @@ export function ContactsListClient() {
           />
           <Input
             type="search"
-            placeholder={t("Buscar por nome, email ou telefone…")}
+            placeholder={t(`Buscar ${vocab.contacts.toLowerCase()} por nome, email ou telefone…`)}
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             className="h-9 w-full pl-8"

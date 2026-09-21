@@ -50,12 +50,21 @@ export const AUTONOMY_LABELS: Record<AutonomyLevel, string> = {
 export const RESPONSE_LENGTH = ["short", "medium", "long"] as const;
 export type ResponseLength = (typeof RESPONSE_LENGTH)[number];
 
+export const serviceItemSchema = z.object({
+  id: z.string().default(() => Math.random().toString(36).slice(2, 9)),
+  name: z.string().min(1, "O nome do item é obrigatório").max(120),
+  price: z.string().max(80).default(""),
+  description: z.string().max(300).default(""),
+});
+export type ServiceItem = z.infer<typeof serviceItemSchema>;
+
 export const assistantConfigSchema = z.object({
   /** Metadados do assistente */
   assistant_name: z.string().min(1).max(80).default("Assistente"),
   presentation: z.string().max(300).default(""),
   objective: z.string().max(500).default(""),
   business_type: z.enum(BUSINESS_TYPES).nullable().default(null),
+  template_id: z.string().nullable().default(null),
 
   /** Tom e comunicação */
   tone: z.enum(TONES).default("professional"),
@@ -64,8 +73,9 @@ export const assistantConfigSchema = z.object({
   use_emojis: z.boolean().default(false),
   response_length: z.enum(RESPONSE_LENGTH).default("medium"),
 
-  /** Conhecimento e regras */
+  /** Conhecimento estruturado e regras */
   services: z.string().max(2000).default(""),
+  service_items: z.array(serviceItemSchema).default([]),
   faq: z.string().max(3000).default(""),
   knowledge_notes: z.string().max(3000).default(""),
   forbidden_topics: z.string().max(1000).default(""),
@@ -192,8 +202,21 @@ export function promptFromConfig(config: AssistantConfig): string {
   parts.push(`Use linguagem ${config.formality === "formal" ? "formal" : "informal"}.`);
   if (config.use_emojis) parts.push("Você pode usar emojis ocasionalmente para tornar a conversa mais amigável.");
   else parts.push("Não use emojis.");
-  parts.push(`Mantenha respostas ${lengthMap[config.response_length]}.`);
-  if (config.services) parts.push(`\nServiços e produtos disponíveis:\n${config.services}`);
+  if (config.service_items && config.service_items.length > 0) {
+    const itemsText = config.service_items
+      .filter(item => item.name && item.name.trim().length > 0)
+      .map(item => {
+        let line = `• ${item.name}`;
+        if (item.price) line += ` — Preço: ${item.price}`;
+        if (item.description) line += ` (${item.description})`;
+        return line;
+      })
+      .join("\n");
+    if (itemsText) {
+      parts.push(`\nCatálogo de Serviços / Produtos e Valores Oficiais:\n${itemsText}`);
+    }
+  }
+  if (config.services) parts.push(`\nInformações adicionais sobre serviços e produtos:\n${config.services}`);
   if (config.faq) parts.push(`\nPerguntas frequentes e respostas:\n${config.faq}`);
   if (config.knowledge_notes) parts.push(`\nInformações importantes que você deve conhecer:\n${config.knowledge_notes}`);
   if (config.forbidden_topics) parts.push(`\nAssuntos que você NÃO deve responder:\n${config.forbidden_topics}\nQuando solicitado sobre esses assuntos, informe educadamente que não pode ajudar e ofereça alternativas.`);

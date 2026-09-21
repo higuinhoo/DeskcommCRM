@@ -4,12 +4,14 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import {
   assistantConfigSchema,
   BUSINESS_TEMPLATES, BUSINESS_TYPE_LABELS, TONE_LABELS, AUTONOMY_LABELS,
   BUSINESS_TYPES, TONES, AUTONOMY_LEVELS, RESPONSE_LENGTH,
-  type AssistantConfig, type BusinessType,
+  type AssistantConfig, type BusinessType, type ServiceItem,
 } from "@/lib/assistant/config-schema";
+import { BUSINESS_TEMPLATES as CANONICAL_TEMPLATES } from "@/lib/templates/business-templates";
 
 interface Props {
   agentId: string | null;
@@ -43,6 +45,62 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
   const [step, setStep] = useState<"config" | "test" | "publish">("config");
   const [testInput, setTestInput] = useState("");
   const [testResponse, setTestResponse] = useState("");
+
+  function applyNicheTemplate(key: string) {
+    const tpl = CANONICAL_TEMPLATES[key];
+    if (!tpl) return;
+    setVersionId(null); setTestedVersionId(null);
+    setConfig(c => ({
+      ...c,
+      assistant_name: tpl.assistant.name,
+      presentation: tpl.assistant.presentation,
+      objective: tpl.assistant.objective,
+      tone: tpl.assistant.tone,
+      formality: tpl.assistant.formality,
+      use_emojis: tpl.assistant.use_emojis,
+      can_schedule: tpl.assistant.can_schedule,
+      service_items: tpl.defaultServices,
+      services: "",
+      faq: tpl.assistant.faq,
+      knowledge_notes: tpl.assistant.knowledge_notes,
+      forbidden_topics: tpl.assistant.forbidden_topics,
+      escalation_triggers: tpl.assistant.escalation_triggers,
+      template_id: key,
+    }));
+  }
+
+  function addServiceItem() {
+    setVersionId(null); setTestedVersionId(null);
+    const newItem: ServiceItem = {
+      id: Math.random().toString(36).slice(2, 9),
+      name: "",
+      price: "",
+      description: "",
+    };
+    setConfig(c => ({
+      ...c,
+      service_items: [...(c.service_items || []), newItem],
+    }));
+  }
+
+  function updateServiceItem(index: number, field: keyof ServiceItem, val: string) {
+    setVersionId(null); setTestedVersionId(null);
+    setConfig(c => {
+      const items = [...(c.service_items || [])];
+      if (items[index]) {
+        items[index] = { ...items[index], [field]: val };
+      }
+      return { ...c, service_items: items };
+    });
+  }
+
+  function removeServiceItem(index: number) {
+    setVersionId(null); setTestedVersionId(null);
+    setConfig(c => ({
+      ...c,
+      service_items: (c.service_items || []).filter((_, i) => i !== index),
+    }));
+  }
 
   function applyTemplate(type: BusinessType) {
     const template = BUSINESS_TEMPLATES[type];
@@ -181,25 +239,36 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
 
       {step === "config" && (
         <div className="space-y-6">
-          {/* Modelos rápidos */}
+          {/* Modelos rápidos por segmento */}
           <section className="rounded-xl border bg-card/60 p-5 shadow-xs space-y-3">
             <div>
               <h2 className="text-base font-semibold">Modelos Prontos por Segmento</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Escolha um modelo abaixo para preencher automaticamente com exemplos recomendados para o seu tipo de negócio.
+                Escolha um modelo abaixo para carregar automaticamente exemplos reais de serviços, preços, perguntas e tom de voz para seu segmento:
               </p>
             </div>
-            <div className="flex flex-wrap gap-2 pt-1">
-              {BUSINESS_TYPES.map(t => (
-                <Button
-                  key={t}
-                  size="sm"
-                  variant={config.business_type === t ? "default" : "outline"}
-                  onClick={() => applyTemplate(t)}
-                >
-                  {BUSINESS_TYPE_LABELS[t]}
-                </Button>
-              ))}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 pt-1">
+              {Object.values(CANONICAL_TEMPLATES).map(t => {
+                const isSelected = config.template_id === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => applyNicheTemplate(t.id)}
+                    className={`flex items-center gap-2.5 rounded-lg border p-2.5 text-left transition-all ${
+                      isSelected
+                        ? "border-primary bg-primary/10 font-semibold text-primary ring-1 ring-primary"
+                        : "bg-background hover:bg-muted/50 text-foreground"
+                    }`}
+                  >
+                    <span className="text-2xl shrink-0">{t.icon}</span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold truncate">{t.label}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">{t.vocabulary.products}</p>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </section>
 
@@ -305,44 +374,133 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
             )}
           </section>
 
-          {/* Conhecimento */}
+          {/* Conhecimento Estruturado e Slots de Serviços */}
           <section className="rounded-xl border bg-card/60 p-5 shadow-xs space-y-4">
             <div>
-              <h2 className="text-base font-semibold">3. O que o Assistente Sabe</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-base font-semibold">3. Serviços, Produtos & Preços</h2>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={addServiceItem}
+                  className="text-xs"
+                >
+                  + Adicionar Item / Serviço
+                </Button>
+              </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Informações sobre seus produtos, serviços e dúvidas frequentes dos clientes.
+                Cadastre os serviços ou produtos em slots específicos com nome, valor e descrição para a IA informar com precisão:
               </p>
             </div>
-            <label className="grid gap-1.5">
-              <span className="text-sm font-medium">Serviços ou Produtos oferecidos</span>
-              <Textarea
-                value={config.services}
-                onChange={e => patch("services", e.target.value)}
-                maxLength={2000}
-                rows={3}
-                placeholder="Liste os serviços, valores ou produtos disponíveis."
-              />
-            </label>
-            <label className="grid gap-1.5">
-              <span className="text-sm font-medium">Perguntas Frequentes (FAQ)</span>
-              <Textarea
-                value={config.faq}
-                onChange={e => patch("faq", e.target.value)}
-                maxLength={3000}
-                rows={4}
-                placeholder="Pergunta: Aceitam convênio?&#10;Resposta: Sim, aceitamos os principais planos de saúde."
-              />
-            </label>
-            <label className="grid gap-1.5">
-              <span className="text-sm font-medium">Outras informações e orientações</span>
-              <Textarea
-                value={config.knowledge_notes}
-                onChange={e => patch("knowledge_notes", e.target.value)}
-                maxLength={3000}
-                rows={3}
-                placeholder="Endereço, estacionamento, formas de pagamento, regras gerais."
-              />
-            </label>
+
+            {/* Lista de slots de serviços */}
+            <div className="space-y-3">
+              {(!config.service_items || config.service_items.length === 0) ? (
+                <div className="rounded-lg border border-dashed p-6 text-center text-muted-foreground space-y-2">
+                  <p className="text-sm font-medium">Nenhum serviço ou produto cadastrado nos slots ainda.</p>
+                  <p className="text-xs text-muted-foreground">
+                    Você pode adicionar seus serviços manualmente ou selecionar um dos modelos prontos acima.
+                  </p>
+                  <Button type="button" size="sm" variant="outline" onClick={addServiceItem} className="mt-2">
+                    + Cadastrar Primeiro Serviço / Item
+                  </Button>
+                </div>
+              ) : (
+                config.service_items.map((item, idx) => (
+                  <div
+                    key={item.id || idx}
+                    className="rounded-lg border bg-background p-3.5 shadow-2xs space-y-2.5 transition-all hover:border-muted-foreground/30"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-muted-foreground">Item #{idx + 1}</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => removeServiceItem(idx)}
+                        className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      >
+                        Excluir
+                      </Button>
+                    </div>
+
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-medium text-muted-foreground block mb-1">
+                          Nome do Serviço / Procedimento / Peça:
+                        </label>
+                        <Input
+                          value={item.name}
+                          onChange={e => updateServiceItem(idx, "name", e.target.value)}
+                          placeholder="Ex: Corte Degradê / Consulta Geral / Troca de Óleo"
+                          className="text-sm font-medium"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium text-muted-foreground block mb-1">
+                          Preço / Valor:
+                        </label>
+                        <Input
+                          value={item.price}
+                          onChange={e => updateServiceItem(idx, "price", e.target.value)}
+                          placeholder="Ex: R$ 50,00 ou Sob consulta"
+                          className="text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-medium text-muted-foreground block mb-1">
+                        Descrição / Detalhes (o que inclui, duração ou garantia):
+                      </label>
+                      <Input
+                        value={item.description}
+                        onChange={e => updateServiceItem(idx, "description", e.target.value)}
+                        placeholder="Ex: Inclui lavagem e finalização (duração aproximada de 45 minutos)"
+                        className="text-xs"
+                      />
+                    </div>
+                  </div>
+                ))
+              )}
+
+              {config.service_items && config.service_items.length > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={addServiceItem}
+                  className="w-full text-xs border-dashed"
+                >
+                  + Adicionar Mais Um Item / Serviço
+                </Button>
+              )}
+            </div>
+
+            {/* FAQ e Observações */}
+            <div className="pt-3 border-t space-y-3">
+              <label className="grid gap-1.5">
+                <span className="text-sm font-medium">Perguntas Frequentes (FAQ)</span>
+                <Textarea
+                  value={config.faq}
+                  onChange={e => patch("faq", e.target.value)}
+                  maxLength={3000}
+                  rows={4}
+                  placeholder="Pergunta: Aceitam convênio?&#10;Resposta: Sim, aceitamos os principais planos de saúde."
+                />
+              </label>
+              <label className="grid gap-1.5">
+                <span className="text-sm font-medium">Outras regras, formas de pagamento ou políticas gerais</span>
+                <Textarea
+                  value={config.knowledge_notes}
+                  onChange={e => patch("knowledge_notes", e.target.value)}
+                  maxLength={3000}
+                  rows={2}
+                  placeholder="Ex: Aceitamos PIX e cartões em até 3x. Estacionamento gratuito para clientes."
+                />
+              </label>
+            </div>
           </section>
 
           {/* Limites */}
