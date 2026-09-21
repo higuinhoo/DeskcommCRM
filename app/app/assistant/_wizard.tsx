@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,6 +19,7 @@ interface Props {
   savedConfig: unknown;
   publishedVersionNumber: number | null;
   publishedAt: string | null;
+  canAccessAdvanced?: boolean;
 }
 
 const LENGTH_LABELS = { short: "Curtas", medium: "Equilibradas", long: "Detalhadas" };
@@ -31,7 +33,7 @@ function loadConfig(raw: unknown): AssistantConfig {
   return parsed.success ? parsed.data : defaultConfig();
 }
 
-export function AssistantWizard({ agentId: initialAgentId, initialVersionId, history, isActive, savedConfig, publishedVersionNumber, publishedAt }: Props) {
+export function AssistantWizard({ agentId: initialAgentId, initialVersionId, history, isActive, savedConfig, publishedVersionNumber, publishedAt, canAccessAdvanced }: Props) {
   const [localAgentId, setLocalAgentId] = useState<string | null>(initialAgentId);
   const [config, setConfig] = useState<AssistantConfig>(() => loadConfig(savedConfig));
   const [versionId, setVersionId] = useState<string | null>(initialVersionId);
@@ -113,19 +115,41 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
 
   return (
     <div className="space-y-6">
+      {/* Banner de atalho para administradores */}
+      {canAccessAdvanced && localAgentId && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50/70 p-4 text-sm dark:border-blue-900/60 dark:bg-blue-950/30">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">⚙️</span>
+            <div>
+              <p className="font-semibold text-foreground">Modo Administrador Disponível</p>
+              <p className="text-xs text-muted-foreground">
+                Você pode personalizar instruções de sistema diretas, modelos de IA (Vertex/Gemini), chaves e ferramentas técnicas.
+              </p>
+            </div>
+          </div>
+          <Button asChild variant="outline" size="sm" className="bg-background shadow-xs">
+            <Link href={`/app/ai/agents/${localAgentId}`}>
+              Painel Técnico Avançado →
+            </Link>
+          </Button>
+        </div>
+      )}
+
       {/* Status do assistente */}
       {localAgentId && (
-        <div className="flex items-center gap-3 rounded-lg border px-4 py-3 text-sm">
-          <span className={`h-2.5 w-2.5 rounded-full ${isActive ? "bg-green-500" : "bg-amber-400"}`} />
-          <span>
-            {isActive ? "Assistente ativo" : "Assistente pausado"}
+        <div className="flex items-center gap-3 rounded-xl border bg-card p-4 text-sm shadow-xs">
+          <span className={`h-3 w-3 rounded-full ${isActive ? "bg-green-500 ring-4 ring-green-100 dark:ring-green-950" : "bg-amber-400 ring-4 ring-amber-100 dark:ring-amber-950"}`} />
+          <div>
+            <span className="font-medium text-foreground">
+              {isActive ? "Assistente Ativo e Respondendo" : "Assistente em Pausa"}
+            </span>
             {publishedVersionNumber && (
-              <span className="ml-2 text-muted-foreground">
+              <span className="ml-2 text-xs text-muted-foreground">
                 · Versão {publishedVersionNumber}
-                {publishedAt && ` · Publicado em ${new Date(publishedAt).toLocaleDateString("pt-BR")}`}
+                {publishedAt && ` (publicada em ${new Date(publishedAt).toLocaleDateString("pt-BR")})`}
               </span>
             )}
-          </span>
+          </div>
           <Button size="sm" variant="outline" className="ml-auto" onClick={() => setStep("test")} disabled={!versionId}>
             Testar rascunho
           </Button>
@@ -133,15 +157,24 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
       )}
 
       {/* Navegação entre passos */}
-      <div className="flex gap-1 text-sm font-medium border-b">
+      <div className="flex gap-2 border-b pb-1 text-sm font-medium">
         {(["config", "test", "publish"] as const).map((s, i) => (
           <button
             key={s}
             disabled={busy || (s === "test" && !versionId) || (s === "publish" && (!versionId || testedVersionId !== versionId))}
             onClick={() => setStep(s)}
-            className={`px-4 py-2 border-b-2 transition-colors ${step === s ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+            className={`flex items-center gap-2 rounded-t-lg px-4 py-2.5 transition-colors ${
+              step === s
+                ? "border-b-2 border-primary font-semibold text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
           >
-            {i + 1}. {s === "config" ? "Configurar" : s === "test" ? "Testar" : "Publicar"}
+            <span className={`flex h-5 w-5 items-center justify-center rounded-full text-xs ${
+              step === s ? "bg-primary text-primary-foreground font-bold" : "bg-muted text-muted-foreground"
+            }`}>
+              {i + 1}
+            </span>
+            {s === "config" ? "Configurar" : s === "test" ? "Simular & Testar" : "Publicar"}
           </button>
         ))}
       </div>
@@ -149,134 +182,277 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
       {step === "config" && (
         <div className="space-y-6">
           {/* Modelos rápidos */}
-          <div>
-            <p className="text-sm font-medium mb-2">Comece com um modelo para o seu segmento (opcional)</p>
-            <div className="flex flex-wrap gap-2">
+          <section className="rounded-xl border bg-card/60 p-5 shadow-xs space-y-3">
+            <div>
+              <h2 className="text-base font-semibold">Modelos Prontos por Segmento</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Escolha um modelo abaixo para preencher automaticamente com exemplos recomendados para o seu tipo de negócio.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 pt-1">
               {BUSINESS_TYPES.map(t => (
-                <Button key={t} size="sm" variant={config.business_type === t ? "default" : "outline"}
-                  onClick={() => applyTemplate(t)}>
+                <Button
+                  key={t}
+                  size="sm"
+                  variant={config.business_type === t ? "default" : "outline"}
+                  onClick={() => applyTemplate(t)}
+                >
                   {BUSINESS_TYPE_LABELS[t]}
                 </Button>
               ))}
             </div>
-          </div>
+          </section>
 
           {/* Identidade */}
-          <section className="space-y-3">
-            <h2 className="text-base font-semibold">Identidade do assistente</h2>
+          <section className="rounded-xl border bg-card/60 p-5 shadow-xs space-y-4">
+            <div>
+              <h2 className="text-base font-semibold">1. Identidade e Apresentação</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Como seu assistente deve se chamar e como ele deve saudar os clientes.
+              </p>
+            </div>
             <label className="grid gap-1.5">
               <span className="text-sm font-medium">Nome do assistente</span>
-              <Input value={config.assistant_name} onChange={e => patch("assistant_name", e.target.value)} maxLength={80} placeholder="Ex: Assistente da Clínica Saúde" />
+              <Input
+                value={config.assistant_name}
+                onChange={e => patch("assistant_name", e.target.value)}
+                maxLength={80}
+                placeholder="Ex: Assistente da Clínica Saúde"
+              />
             </label>
             <label className="grid gap-1.5">
               <span className="text-sm font-medium">Como ele deve se apresentar</span>
-              <Textarea value={config.presentation} onChange={e => patch("presentation", e.target.value)} maxLength={300} rows={2} placeholder="Ex: Olá! Sou o assistente virtual da Clínica Saúde e estou aqui para ajudar…" />
+              <Textarea
+                value={config.presentation}
+                onChange={e => patch("presentation", e.target.value)}
+                maxLength={300}
+                rows={2}
+                placeholder="Ex: Olá! Sou o assistente virtual da Clínica Saúde e estou aqui para ajudar…"
+              />
             </label>
             <label className="grid gap-1.5">
-              <span className="text-sm font-medium">Objetivo do atendimento</span>
-              <Textarea value={config.objective} onChange={e => patch("objective", e.target.value)} maxLength={500} rows={2} placeholder="Ex: Auxiliar pacientes com informações, agendamentos e dúvidas sobre consultas." />
+              <span className="text-sm font-medium">Objetivo principal do atendimento</span>
+              <Textarea
+                value={config.objective}
+                onChange={e => patch("objective", e.target.value)}
+                maxLength={500}
+                rows={2}
+                placeholder="Ex: Auxiliar pacientes com informações, agendamentos e dúvidas sobre consultas."
+              />
             </label>
           </section>
 
           {/* Comunicação */}
-          <section className="space-y-3">
-            <h2 className="text-base font-semibold">Comunicação</h2>
+          <section className="rounded-xl border bg-card/60 p-5 shadow-xs space-y-4">
+            <div>
+              <h2 className="text-base font-semibold">2. Tom de Voz e Comunicação</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Defina o estilo das mensagens e o ritmo das respostas.
+              </p>
+            </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="grid gap-1.5">
-                <span className="text-sm font-medium">Tom</span>
-                <select className="rounded-md border bg-background p-2 text-sm" value={config.tone} onChange={e => patch("tone", e.target.value as AssistantConfig["tone"])}>
+                <span className="text-sm font-medium">Tom da conversa</span>
+                <select
+                  className="rounded-md border bg-background p-2 text-sm"
+                  value={config.tone}
+                  onChange={e => patch("tone", e.target.value as AssistantConfig["tone"])}
+                >
                   {TONES.map(t => <option key={t} value={t}>{TONE_LABELS[t]}</option>)}
                 </select>
               </label>
               <label className="grid gap-1.5">
                 <span className="text-sm font-medium">Grau de formalidade</span>
-                <select className="rounded-md border bg-background p-2 text-sm" value={config.formality} onChange={e => patch("formality", e.target.value as AssistantConfig["formality"])}>
-                  <option value="formal">Formal</option>
-                  <option value="informal">Informal</option>
+                <select
+                  className="rounded-md border bg-background p-2 text-sm"
+                  value={config.formality}
+                  onChange={e => patch("formality", e.target.value as AssistantConfig["formality"])}
+                >
+                  <option value="formal">Formal (Senhor / Senhora)</option>
+                  <option value="informal">Informal (Você / Natural)</option>
                 </select>
               </label>
               <label className="grid gap-1.5">
                 <span className="text-sm font-medium">Tamanho das respostas</span>
-                <select className="rounded-md border bg-background p-2 text-sm" value={config.response_length} onChange={e => patch("response_length", e.target.value as AssistantConfig["response_length"])}>
+                <select
+                  className="rounded-md border bg-background p-2 text-sm"
+                  value={config.response_length}
+                  onChange={e => patch("response_length", e.target.value as AssistantConfig["response_length"])}
+                >
                   {RESPONSE_LENGTH.map(l => <option key={l} value={l}>{LENGTH_LABELS[l]}</option>)}
                 </select>
               </label>
-              <label className="flex items-center gap-2 pt-5">
-                <input type="checkbox" checked={config.use_emojis} onChange={e => patch("use_emojis", e.target.checked)} className="h-4 w-4" />
-                <span className="text-sm">Usar emojis ocasionalmente</span>
+              <label className="flex items-center gap-2 pt-6">
+                <input
+                  type="checkbox"
+                  checked={config.use_emojis}
+                  onChange={e => patch("use_emojis", e.target.checked)}
+                  className="h-4 w-4 rounded"
+                />
+                <span className="text-sm">Usar emojis de forma amigável</span>
               </label>
             </div>
             {config.tone === "custom" && (
               <label className="grid gap-1.5">
                 <span className="text-sm font-medium">Descreva o tom personalizado</span>
-                <Input value={config.custom_tone} onChange={e => patch("custom_tone", e.target.value)} maxLength={200} />
+                <Input
+                  value={config.custom_tone}
+                  onChange={e => patch("custom_tone", e.target.value)}
+                  maxLength={200}
+                  placeholder="Ex: Entusiasta, jovem e acolhedor"
+                />
               </label>
             )}
           </section>
 
           {/* Conhecimento */}
-          <section className="space-y-3">
-            <h2 className="text-base font-semibold">O que ele sabe</h2>
+          <section className="rounded-xl border bg-card/60 p-5 shadow-xs space-y-4">
+            <div>
+              <h2 className="text-base font-semibold">3. O que o Assistente Sabe</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Informações sobre seus produtos, serviços e dúvidas frequentes dos clientes.
+              </p>
+            </div>
             <label className="grid gap-1.5">
-              <span className="text-sm font-medium">Serviços oferecidos</span>
-              <Textarea value={config.services} onChange={e => patch("services", e.target.value)} maxLength={2000} rows={3} placeholder="Liste os serviços, produtos ou consultas disponíveis." />
+              <span className="text-sm font-medium">Serviços ou Produtos oferecidos</span>
+              <Textarea
+                value={config.services}
+                onChange={e => patch("services", e.target.value)}
+                maxLength={2000}
+                rows={3}
+                placeholder="Liste os serviços, valores ou produtos disponíveis."
+              />
             </label>
             <label className="grid gap-1.5">
-              <span className="text-sm font-medium">Perguntas frequentes</span>
-              <Textarea value={config.faq} onChange={e => patch("faq", e.target.value)} maxLength={3000} rows={4} placeholder="Pergunta: … Resposta: …" />
+              <span className="text-sm font-medium">Perguntas Frequentes (FAQ)</span>
+              <Textarea
+                value={config.faq}
+                onChange={e => patch("faq", e.target.value)}
+                maxLength={3000}
+                rows={4}
+                placeholder="Pergunta: Aceitam convênio?&#10;Resposta: Sim, aceitamos os principais planos de saúde."
+              />
             </label>
             <label className="grid gap-1.5">
-              <span className="text-sm font-medium">Outras informações importantes</span>
-              <Textarea value={config.knowledge_notes} onChange={e => patch("knowledge_notes", e.target.value)} maxLength={3000} rows={3} placeholder="Endereço, políticas, regras, observações que o assistente precisa saber." />
+              <span className="text-sm font-medium">Outras informações e orientações</span>
+              <Textarea
+                value={config.knowledge_notes}
+                onChange={e => patch("knowledge_notes", e.target.value)}
+                maxLength={3000}
+                rows={3}
+                placeholder="Endereço, estacionamento, formas de pagamento, regras gerais."
+              />
             </label>
           </section>
 
           {/* Limites */}
-          <section className="space-y-3">
-            <h2 className="text-base font-semibold">Limites e transferências</h2>
+          <section className="rounded-xl border bg-card/60 p-5 shadow-xs space-y-4">
+            <div>
+              <h2 className="text-base font-semibold">4. Limites e Transbordo Humano</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Defina o que o assistente NÃO pode falar e quando deve encaminhar para sua equipe.
+              </p>
+            </div>
             <label className="grid gap-1.5">
-              <span className="text-sm font-medium">Assuntos que ele NÃO pode responder</span>
-              <Textarea value={config.forbidden_topics} onChange={e => patch("forbidden_topics", e.target.value)} maxLength={1000} rows={2} placeholder="Ex: Diagnósticos, preços de concorrentes, informações confidenciais." />
+              <span className="text-sm font-medium">Assuntos que ele NUNCA deve responder</span>
+              <Textarea
+                value={config.forbidden_topics}
+                onChange={e => patch("forbidden_topics", e.target.value)}
+                maxLength={1000}
+                rows={2}
+                placeholder="Ex: Diagnósticos médicos, opiniões políticas, dados de concorrentes."
+              />
             </label>
             <label className="grid gap-1.5">
-              <span className="text-sm font-medium">Situações em que deve chamar um humano</span>
-              <Textarea value={config.escalation_triggers} onChange={e => patch("escalation_triggers", e.target.value)} maxLength={1000} rows={2} placeholder="Ex: Urgências, reclamações, solicitações especiais." />
+              <span className="text-sm font-medium">Quando chamar um atendente humano</span>
+              <Textarea
+                value={config.escalation_triggers}
+                onChange={e => patch("escalation_triggers", e.target.value)}
+                maxLength={1000}
+                rows={2}
+                placeholder="Ex: Reclamações, emergências, solicitação explícita de falar com uma pessoa."
+              />
             </label>
           </section>
 
           {/* Agenda */}
-          <section className="space-y-3">
-            <h2 className="text-base font-semibold">Agendamentos</h2>
+          <section className="rounded-xl border bg-card/60 p-5 shadow-xs space-y-4">
+            <div>
+              <h2 className="text-base font-semibold">5. Horários e Agendamentos</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Configure disponibilidade de agenda e respostas fora do horário de atendimento.
+              </p>
+            </div>
             <label className="flex items-center gap-2">
-              <input type="checkbox" checked={config.can_schedule} onChange={e => patch("can_schedule", e.target.checked)} className="h-4 w-4" />
-              <span className="text-sm">O assistente pode consultar e criar agendamentos</span>
+              <input
+                type="checkbox"
+                checked={config.can_schedule}
+                onChange={e => patch("can_schedule", e.target.checked)}
+                className="h-4 w-4 rounded"
+              />
+              <span className="text-sm font-medium">O assistente pode consultar horários e agendar compromissos</span>
             </label>
             <label className="grid gap-1.5">
-              <span className="text-sm font-medium">Horários de atendimento</span>
-              <Input value={config.business_hours} onChange={e => patch("business_hours", e.target.value)} maxLength={500} placeholder="Ex: Segunda a sexta, das 8h às 18h." />
+              <span className="text-sm font-medium">Horários de atendimento da empresa</span>
+              <Input
+                value={config.business_hours}
+                onChange={e => patch("business_hours", e.target.value)}
+                maxLength={500}
+                placeholder="Ex: Segunda a sexta, das 8h às 18h."
+              />
             </label>
             <label className="grid gap-1.5">
-              <span className="text-sm font-medium">Mensagem fora do horário</span>
-              <Input value={config.out_of_hours_message} onChange={e => patch("out_of_hours_message", e.target.value)} maxLength={500} placeholder="Ex: Obrigado pelo contato. Retornaremos em breve." />
+              <span className="text-sm font-medium">Mensagem automática fora do horário</span>
+              <Input
+                value={config.out_of_hours_message}
+                onChange={e => patch("out_of_hours_message", e.target.value)}
+                maxLength={500}
+                placeholder="Ex: Nosso atendimento encerrou por hoje, mas já registrei sua mensagem e responderemos amanhã cedo!"
+              />
             </label>
           </section>
 
           {/* Autonomia */}
-          <section className="space-y-3">
-            <h2 className="text-base font-semibold">Nível de autonomia</h2>
+          <section className="rounded-xl border bg-card/60 p-5 shadow-xs space-y-4">
+            <div>
+              <h2 className="text-base font-semibold">6. Nível de Autonomia</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Qual a liberdade do assistente para responder sozinho.
+              </p>
+            </div>
             <div className="space-y-2">
               {AUTONOMY_LEVELS.map(level => (
-                <label key={level} className="flex items-start gap-2 rounded-lg border p-3 cursor-pointer hover:bg-muted/30">
-                  <input type="radio" name="autonomy" value={level} checked={config.autonomy === level}
-                    onChange={() => patch("autonomy", level)} className="mt-0.5 h-4 w-4" />
-                  <span className="text-sm">{AUTONOMY_LABELS[level]}</span>
+                <label
+                  key={level}
+                  className={`flex items-start gap-3 rounded-lg border p-3.5 cursor-pointer transition-colors ${
+                    config.autonomy === level ? "border-primary bg-primary/5" : "hover:bg-muted/40"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="autonomy"
+                    value={level}
+                    checked={config.autonomy === level}
+                    onChange={() => patch("autonomy", level)}
+                    className="mt-1 h-4 w-4"
+                  />
+                  <div>
+                    <span className="text-sm font-medium">{AUTONOMY_LABELS[level]}</span>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {level === "full" && "Responde dúvidas, realiza consultas e conduz o atendimento de forma independente."}
+                      {level === "assisted" && "Responde dúvidas simples e aciona humanos rapidamente em casos específicos."}
+                      {level === "strict" && "Apenas fornece informações estritas já pré-definidas na base."}
+                    </p>
+                  </div>
                 </label>
               ))}
             </div>
           </section>
 
-          <div className="flex gap-3 pt-2">
-            <Button onClick={saveDraft} disabled={busy}>{busy ? "Salvando…" : "Salvar rascunho"}</Button>
+          <div className="flex items-center gap-3 pt-2">
+            <Button size="lg" onClick={saveDraft} disabled={busy}>
+              {busy ? "Salvando…" : "Salvar e Avançar para Teste →"}
+            </Button>
           </div>
         </div>
       )}

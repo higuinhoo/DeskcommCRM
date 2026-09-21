@@ -594,6 +594,24 @@ export function AgentForm(props: Props) {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Banner de atalho para a visão simplificada do cliente */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-purple-200 bg-purple-50/60 p-3.5 text-sm dark:border-purple-900/50 dark:bg-purple-950/20">
+        <div className="flex items-center gap-2.5">
+          <span className="text-xl">✨</span>
+          <div>
+            <span className="font-semibold text-foreground">Configuração Rápida (Visão do Cliente):</span>{" "}
+            <span className="text-xs text-muted-foreground">
+              Deseja ajustar apenas o nome, tom de voz, serviços ou perguntas frequentes sem editar prompts técnicos brutos ou credenciais de LLM?
+            </span>
+          </div>
+        </div>
+        <Button asChild variant="outline" size="sm" className="bg-background shadow-xs">
+          <Link href="/app/assistant">
+            Abrir Meu Assistente →
+          </Link>
+        </Button>
+      </div>
+
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>

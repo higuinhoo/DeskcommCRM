@@ -64,6 +64,10 @@ export default async function AssistantPage() {
     } catch { historyUnavailable = true; }
   }
 
+  const canAccessAdvanced = Boolean(
+    user.is_platform_admin || ["admin", "owner", "manager"].includes(activeOrg.role)
+  );
+
   return (
     <main className="mx-auto max-w-3xl px-4 py-8 space-y-8">
       <div>
@@ -82,6 +86,7 @@ export default async function AssistantPage() {
         savedConfig={draft?.config ?? (agent?.config as Record<string, unknown> | null)?.assistant_config ?? null}
         publishedVersionNumber={publishedVersion?.version_number ?? null}
         publishedAt={publishedVersion?.published_at ?? null}
+        canAccessAdvanced={canAccessAdvanced}
       />
     </main>
   );
