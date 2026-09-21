@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { EntradaDaAgenda } from "@/components/agenda/EntradaDaAgenda";
@@ -8,6 +9,7 @@ import { VinculoDaMarcacao } from "@/components/agenda/VinculoDaMarcacao";
 import { useLocaleDeData } from "@/hooks/i18n/useLocaleDeData";
 
 import { useT } from "@/hooks/i18n/useT";
+import { useBusinessVocabulary } from "@/hooks/useBusinessVocabulary";
 
 import { addDays, endOfMonth, format, startOfDay, startOfMonth, startOfWeek } from "date-fns";
 import * as React from "react";
@@ -37,7 +39,7 @@ import {
   useRemarcarAgendamento,
 } from "@/hooks/agenda/useRemarcarAgendamento";
 import { usePessoasDaAgenda } from "@/hooks/agenda/usePessoasDaAgenda";
-import { CalendarPlus, CaretLeft, CaretRight } from "@/lib/ui/icons";
+import { CalendarPlus, CaretLeft, CaretRight, Gear } from "@/lib/ui/icons";
 import { cn } from "@/lib/utils";
 
 const VISOES: Array<{ id: VisaoDaAgenda; rotulo: string }> = [
@@ -118,6 +120,7 @@ export function AgendaClient({
 }) {
   const localeDaData = useLocaleDeData();
   const t = useT();
+  const vocab = useBusinessVocabulary();
   const router = useRouter();
   const [marcando, setMarcando] = React.useState(false);
   // O compromisso criado NESTA abertura do painel. Serve para levar a grade até
@@ -399,35 +402,34 @@ export function AgendaClient({
 
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight">{t("Agenda")}</h1>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="text-2xl font-semibold tracking-tight">
+              {t(vocab.calendar_title || "Agenda")}
+            </h1>
+            <Link
+              href="/app/settings/template"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/40 px-2.5 py-0.5 text-xs text-muted-foreground hover:bg-muted/80 hover:text-foreground transition-colors"
+              title={t("Template de negócio ativo. Clique para alterar.")}
+            >
+              <span>{vocab.templateIcon}</span>
+              <span className="font-medium">{vocab.templateLabel}</span>
+            </Link>
+          </div>
           <p className="text-sm text-muted-foreground">
-            {t("O que está marcado, com quem, e quem atende — seu e da equipe.")}
+            {t(vocab.calendar_subtitle || "O que está marcado, com quem, e quem atende — seu e da equipe.")}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <Link href="/app/settings/tenant/agenda">
+            <Button variant="outline" size="sm" title={t("Configurar tipos de agendamento e horários")}>
+              <Gear size={16} aria-hidden />
+              <span className="hidden sm:inline">{t("Configurações")}</span>
+            </Button>
+          </Link>
           <Button variant="outline" size="sm" onClick={() => setAncora(new Date())}>
             {t("Hoje")}
           </Button>
-          {/*
-            DESABILITADO COM O MOTIVO À VISTA, e não ligado a um `onClick` vazio.
-            Enquanto a frente 1 não expõe `/api/v1/agenda` não há o que marcar, e
-            um botão primário, com cor de ação e sem `disabled`, que não faz nada
-            ao clique é pior do que não existir: quem clica conclui que o produto
-            está quebrado e não tem o que reportar além de "não abre". É o
-            anti-pattern de controle decorativo, e esta base já pagou por ele.
-
-            O motivo vai em texto ao lado, não só no `title`: atributo de
-            hover não existe para quem usa toque, que é o dono de clínica no
-            celular.
-          */}
           {podeMarcar && !tipo && (
-            // Sem NENHUM tipo de agendamento cadastrado não há o que marcar — e
-            // isto é diferente de "a API não existe": a ação faz sentido, falta
-            // configuração. Por isso o motivo à vista, e não um botão mudo.
-            //
-            // `podeMarcar` vem ANTES de `!tipo`, e a ordem é o ponto: para quem
-            // só lê não existe botão desabilitado a explicar, então o motivo
-            // seria conversa sobre um gesto que não está na tela dele.
             <span
               data-testid="motivo-novo-agendamento"
               className="hidden text-xs text-text-subtle sm:inline"
@@ -435,27 +437,16 @@ export function AgendaClient({
               {t("Cadastre um tipo de agendamento para começar")}
             </span>
           )}
-          {/* PRIMEIRA PORTA da escrita nesta tela. Quem só lê não vê o botão: o
-              403 da rota nunca chega a ser oferecido, e o rótulo segue igual (a
-              spec e2e o acha por papel/rótulo, e não muda). */}
           {podeMarcar && (
             <Button
               size="sm"
               disabled={!tipo}
-              // `data-testid` porque o RÓTULO deixou de ser estável: até este PR
-              // ele era literal, e `agenda-escopo-da-organizacao.spec.ts` o acha
-              // por `getByRole("button", { name: /Novo agendamento/i })`. Com o
-              // texto passando por `t()`, casar por rótulo passa a depender do
-              // idioma da conta de teste — hoje passa porque a conta nasce em
-              // português, mas é acoplamento que não precisa existir. O testid é
-              // o caminho estável; trocar a spec para usá-lo é decisão de quem a
-              // escreveu, e vai anotada no PR.
               data-testid="novo-agendamento"
               title={tipo ? undefined : t("Cadastre um tipo de agendamento para começar")}
               onClick={abrirMarcacao}
             >
               <CalendarPlus size={16} weight="bold" aria-hidden />
-              <span>{t("Novo agendamento")}</span>
+              <span>{t(vocab.new_appointment_button || "Novo agendamento")}</span>
             </Button>
           )}
         </div>

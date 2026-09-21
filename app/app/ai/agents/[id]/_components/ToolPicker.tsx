@@ -9,7 +9,8 @@
  * pergunta dele é "o que essa coisa vai fazer com meus clientes?".
  *
  * O caminho padrão é o PACOTE por jornada. O checkbox por capacidade continua
- * existindo em modo avançado — para quem quer, quando quer.
+ * existindo em modo avançado — agora organizado por grupos temáticos claros
+ * (Agendamento, Atendimento, Vendas, etc.).
  *
  * A regra de quem entra por pacote NÃO mora aqui: vive em
  * `lib/mcp/tools/selecao-por-pacote.ts`, com teste. O componente chama e
@@ -19,6 +20,8 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { apiClient } from "@/lib/api/client";
 import { useT } from "@/hooks/i18n/useT";
@@ -40,6 +43,11 @@ import {
   vagasRestantes,
   type CapacidadeSelecionavel,
 } from "@/lib/mcp/tools/selecao-por-pacote";
+import {
+  GRUPOS_AVANCADOS,
+  classificarToolNoGrupo,
+  type ToolGroupId,
+} from "@/lib/mcp/tools/grupos-avancados";
 
 /** O que a rota `/api/v1/mcp/tools` serve (snake_case no wire). */
 export interface McpToolMeta extends CapacidadeSelecionavel {
@@ -108,7 +116,7 @@ function FichaCapacidade({
       data-testid={`capacidade-${capacidade.name}`}
       data-marcada={marcada ? "sim" : "nao"}
       data-risco={capacidade.risco}
-      className={`flex cursor-pointer items-start gap-3 rounded-md p-2 hover:bg-muted/40 ${
+      className={`flex cursor-pointer items-start gap-3 rounded-md p-2 hover:bg-muted/40 transition-colors ${
         bloqueada ? "opacity-60" : ""
       }`}
     >
@@ -128,8 +136,6 @@ function FichaCapacidade({
         </span>
         <span className="block text-xs text-muted-foreground">{t(capacidade.explicacao)}</span>
         {capacidade.motivo_nao_marcavel ? (
-          // O motivo do descarte, NA TELA. Antes disto o dono marcava e o engine
-          // jogava fora; o aviso existia só no log do worker, que ninguém lê.
           <span
             data-testid={`motivo-nao-marcavel-${capacidade.name}`}
             className="block text-xs text-sky-700 dark:text-sky-400"
@@ -151,13 +157,14 @@ export function ToolPicker({ value, onChange, disabled }: Props) {
   const t = useT();
   const [avancado, setAvancado] = React.useState(false);
   const [recusa, setRecusa] = React.useState<string | null>(null);
+  const [busca, setBusca] = React.useState("");
+  const [grupoSelecionado, setGrupoSelecionado] = React.useState<ToolGroupId | "todos">("todos");
 
   const query = useQuery({
     queryKey: ["mcp", "tools"],
     queryFn: async () => {
       const res = await apiClient.get<ApiResponse>("/api/v1/mcp/tools");
-      // `name` é o mesmo `id` — a regra de seleção fala em `name`, o wire em `id`.
-      return res.data.tools.map((t) => ({ ...t, name: t.id })) as McpToolMeta[];
+      return res.data.tools.map((item) => ({ ...item, name: item.id })) as McpToolMeta[];
     },
     staleTime: 60_000,
   });
@@ -171,20 +178,9 @@ export function ToolPicker({ value, onChange, disabled }: Props) {
   const vagas = vagasRestantes(value);
   const cheio = vagas <= 0;
 
-  /** Ids salvos que o servidor não oferece mais — some da tela seria mentir. */
+  /** Ids salvos que o servidor não oferece mais. */
   const orfas = value.filter((id) => !porNome.has(id));
 
-  /**
-   * `vagasExigidas` é o que DECIDE, e por padrão é o tamanho do resultado.
-   *
-   * Ele existe separado porque ligar um pacote exige mais vagas do que o
-   * resultado ocupa: as críticas do pacote não entram por ele, mas o humano
-   * precisa poder marcá-las depois (issue #162). A primeira versão desta
-   * correção contava as críticas só na MENSAGEM de recusa e deixava a decisão
-   * em `proximo.length` — o número certo aparecia no texto e não mudava nada.
-   * Medido na tela: com 3 ligadas, "Atender" (17 automáticas + 1 crítica)
-   * chegava a 20, passava, e a crítica nascia desabilitada.
-   */
   function aplicar(proximo: string[], motivoSeRecusar: string, vagasExigidas = proximo.length) {
     if (vagasExigidas > TETO_TOOLS_POR_AGENTE) {
       setRecusa(motivoSeRecusar);
@@ -197,11 +193,6 @@ export function ToolPicker({ value, onChange, disabled }: Props) {
   function alternarPacote(pacote: ToolBundle, ligar: boolean) {
     if (ligar) {
       const proximo = ligarPacote(value, catalogo, pacote);
-      // O excedente conta as CRÍTICAS do pacote junto (issue #162): ligar o
-      // pacote e deixar a crítica dele sem vaga é prometer uma escolha que o
-      // produto não permite fazer — o checkbox nasce desabilitado, sem dizer
-      // por quê. Ou cabe inteiro, com a vaga da crítica guardada, ou não liga
-      // e a tela diz quantas faltam.
       const exigidas = vagasExigidasPeloPacote(value, catalogo, pacote);
       const excedente = exigidas - TETO_TOOLS_POR_AGENTE;
       aplicar(
@@ -231,6 +222,61 @@ export function ToolPicker({ value, onChange, disabled }: Props) {
     );
   }
 
+  /** Ferramentas de agendamento em destaque */
+  const agendamentoTools = React.useMemo(() => {
+    return catalogo.filter(
+      (c) => classificarToolNoGrupo(c.name, c.o_que_toca) === "agendamento",
+    );
+  }, [catalogo]);
+
+  const agendamentoLigadas = React.useMemo(() => {
+    return agendamentoTools.filter((t) => value.includes(t.name));
+  }, [agendamentoTools, value]);
+
+  /** Liga todas as ferramentas marcáveis de um grupo */
+  function ligarGrupo(groupId: ToolGroupId) {
+    const toolsDoGrupo = catalogo.filter(
+      (c) => classificarToolNoGrupo(c.name, c.o_que_toca) === groupId && c.marcavel,
+    );
+    const novas = toolsDoGrupo.filter((t) => !value.includes(t.name)).map((t) => t.name);
+    if (novas.length === 0) return;
+
+    const proximo = [...value, ...novas];
+    const excedente = proximo.length - TETO_TOOLS_POR_AGENTE;
+    aplicar(
+      proximo,
+      `${t("Ligar este grupo passaria de")} ${TETO_TOOLS_POR_AGENTE} ${t("capacidades (faltam")} ${excedente} ${
+        excedente === 1 ? t("vaga") : t("vagas")
+      }${t("). Desligue outras antes.")}`,
+    );
+  }
+
+  /** Desliga todas as ferramentas de um grupo */
+  function desligarGrupo(groupId: ToolGroupId) {
+    setRecusa(null);
+    const nomesDoGrupo = new Set(
+      catalogo
+        .filter((c) => classificarToolNoGrupo(c.name, c.o_que_toca) === groupId)
+        .map((c) => c.name),
+    );
+    onChange(value.filter((id) => !nomesDoGrupo.has(id)));
+  }
+
+  /** Agrupamento completo para a lista avançada */
+  const catalogoPorGrupo = React.useMemo(() => {
+    const mapa = new Map<ToolGroupId, McpToolMeta[]>();
+    for (const g of GRUPOS_AVANCADOS) {
+      mapa.set(g.id, []);
+    }
+    for (const item of catalogo) {
+      const gid = classificarToolNoGrupo(item.name, item.o_que_toca);
+      const lista = mapa.get(gid) ?? [];
+      lista.push(item);
+      mapa.set(gid, lista);
+    }
+    return mapa;
+  }, [catalogo]);
+
   if (query.isLoading) {
     return <p className="text-sm text-muted-foreground">{t("Carregando as capacidades…")}</p>;
   }
@@ -244,7 +290,7 @@ export function ToolPicker({ value, onChange, disabled }: Props) {
 
   return (
     <div className="space-y-4" data-testid="tool-picker">
-      {/* Consumo do teto — o número que impede a surpresa no salvar. */}
+      {/* Consumo do teto */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 p-3">
         <p className="text-sm">
           <strong data-testid="consumo-teto">
@@ -268,7 +314,83 @@ export function ToolPicker({ value, onChange, disabled }: Props) {
         </p>
       ) : null}
 
-      {/* Caminho padrão: pacotes por jornada. */}
+      {/* Destaque Especial: Capacidades de Agendamento & Calendário */}
+      <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">📅</span>
+              <h4 className="text-sm font-semibold">{t("Agendamento & Calendário")}</h4>
+              <Badge
+                variant="outline"
+                className={`text-xs font-medium ${
+                  agendamentoLigadas.length > 0
+                    ? "border-primary/40 bg-primary/10 text-primary"
+                    : "border-border/60 text-muted-foreground"
+                }`}
+              >
+                {agendamentoLigadas.length} {t("de")} {agendamentoTools.length} {t("ativas")}
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {t(
+                "Tudo que o agente precisa para consultar horários livres, marcar consultas ou sessões, remarcar e confirmar compromissos no WhatsApp.",
+              )}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {agendamentoLigadas.length < agendamentoTools.length ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs border-primary/40 text-primary hover:bg-primary/10"
+                disabled={disabled}
+                onClick={() => ligarGrupo("agendamento")}
+              >
+                {t("Ativar Agendamento Completo")}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={disabled}
+                onClick={() => desligarGrupo("agendamento")}
+              >
+                {t("Desativar Agendamento")}
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Chips de visualização rápida das ferramentas de agendamento */}
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {agendamentoTools.map((tool) => {
+            const ativa = value.includes(tool.name);
+            return (
+              <button
+                key={tool.name}
+                type="button"
+                disabled={disabled || (!ativa && cheio)}
+                onClick={() => alternarCapacidade(tool.name)}
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs border transition-colors ${
+                  ativa
+                    ? "bg-primary text-primary-foreground border-primary font-medium"
+                    : "bg-background text-muted-foreground border-border/70 hover:bg-muted/60"
+                }`}
+                title={tool.explicacao}
+              >
+                <span>{ativa ? "✓" : "+"}</span>
+                <span>{tool.rotulo}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Caminho padrão: pacotes por jornada */}
       <div className="grid gap-3">
         {PACOTES.map((pacote) => {
           const automaticas = capacidadesAutomaticasDoPacote(catalogo, pacote.id);
@@ -317,7 +439,7 @@ export function ToolPicker({ value, onChange, disabled }: Props) {
                 </div>
               </div>
 
-              {/* Crítico nunca entra por pacote: exige o dedo do humano. */}
+              {/* Crítico nunca entra por pacote */}
               {criticas.length > 0 ? (
                 <div
                   data-testid={`criticas-${pacote.id}`}
@@ -348,7 +470,7 @@ export function ToolPicker({ value, onChange, disabled }: Props) {
         })}
       </div>
 
-      {/* Modo avançado: a lista inteira, capacidade por capacidade. */}
+      {/* Modo avançado organizado por grupos */}
       <div className="space-y-2">
         <button
           type="button"
@@ -363,27 +485,152 @@ export function ToolPicker({ value, onChange, disabled }: Props) {
         {avancado ? (
           <div
             data-testid="lista-avancada"
-            className="space-y-1 rounded-md border border-border/60 p-3"
+            className="space-y-4 rounded-md border border-border/60 p-4 bg-muted/10"
           >
-            <p className="pb-1 text-xs text-muted-foreground">
-              {t(
-                "Cada linha é uma capacidade. O nome em cinza é como ela aparece para quem integra o sistema por fora.",
-              )}
-            </p>
-            {catalogo.map((capacidade) => {
-              const marcada = value.includes(capacidade.name);
-              return (
-                <FichaCapacidade
-                  key={capacidade.name}
-                  capacidade={capacidade}
-                  marcada={marcada}
-                  bloqueada={!marcada && cheio}
-                  onToggle={() => alternarCapacidade(capacidade.name)}
-                  disabled={disabled}
-                  mostrarNomeTecnico
-                />
-              );
-            })}
+            <div className="space-y-1">
+              <h4 className="text-sm font-semibold">{t("Lista completa organizada por área")}</h4>
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  "Escolha capacidade por capacidade. O nome em cinza é a identificação técnica para integrações externas.",
+                )}
+              </p>
+            </div>
+
+            {/* Barra de busca e filtros rápidos */}
+            <div className="space-y-2">
+              <Input
+                placeholder={t("Buscar capacidade por nome, função ou área (ex: consulta, funil, contato...)")}
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                className="h-9 text-xs"
+              />
+
+              <div className="flex flex-wrap gap-1 pt-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={grupoSelecionado === "todos" ? "default" : "outline"}
+                  className="h-7 text-xs px-2.5"
+                  onClick={() => setGrupoSelecionado("todos")}
+                >
+                  {t("Todos")} ({value.length}/{catalogo.length})
+                </Button>
+                {GRUPOS_AVANCADOS.map((grupo) => {
+                  const items = catalogoPorGrupo.get(grupo.id) ?? [];
+                  if (items.length === 0) return null;
+                  const ligadas = items.filter((i) => value.includes(i.name)).length;
+                  const selecionado = grupoSelecionado === grupo.id;
+
+                  return (
+                    <Button
+                      key={grupo.id}
+                      type="button"
+                      size="sm"
+                      variant={selecionado ? "default" : "outline"}
+                      className={`h-7 text-xs px-2.5 ${
+                        !selecionado && ligadas > 0 ? "border-primary/40 font-medium text-primary" : ""
+                      }`}
+                      onClick={() => setGrupoSelecionado(grupo.id)}
+                    >
+                      <span className="mr-1">{grupo.emoji}</span>
+                      <span>{t(grupo.rotulo.split("&")[0]?.trim() || grupo.rotulo)}</span>
+                      <span className="ml-1 text-[11px] opacity-75">
+                        ({ligadas}/{items.length})
+                      </span>
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Grupos temáticos */}
+            <div className="space-y-4 pt-1">
+              {GRUPOS_AVANCADOS.filter(
+                (g) => grupoSelecionado === "todos" || grupoSelecionado === g.id,
+              ).map((grupo) => {
+                const todasDoGrupo = catalogoPorGrupo.get(grupo.id) ?? [];
+                const termo = busca.trim().toLowerCase();
+                const filtradas = todasDoGrupo.filter((c) => {
+                  if (!termo) return true;
+                  return (
+                    c.name.toLowerCase().includes(termo) ||
+                    c.rotulo.toLowerCase().includes(termo) ||
+                    c.explicacao.toLowerCase().includes(termo) ||
+                    c.o_que_toca.toLowerCase().includes(termo)
+                  );
+                });
+
+                if (filtradas.length === 0) return null;
+
+                const ligadas = todasDoGrupo.filter((c) => value.includes(c.name));
+                const marcaveis = todasDoGrupo.filter((c) => c.marcavel);
+                const tudoLigado = marcaveis.length > 0 && marcaveis.every((c) => value.includes(c.name));
+
+                return (
+                  <div
+                    key={grupo.id}
+                    className="rounded-lg border border-border/70 bg-card p-3 space-y-3"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 pb-2">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-base">{grupo.emoji}</span>
+                          <span className="text-sm font-medium">{t(grupo.rotulo)}</span>
+                          <Badge variant="outline" className="text-[11px]">
+                            {ligadas.length} {t("de")} {todasDoGrupo.length} {t("ativas")}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{t(grupo.explicacao)}</p>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        {!tudoLigado ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs text-primary"
+                            disabled={disabled || cheio}
+                            onClick={() => ligarGrupo(grupo.id)}
+                          >
+                            {t("Ligar grupo")}
+                          </Button>
+                        ) : null}
+                        {ligadas.length > 0 ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                            disabled={disabled}
+                            onClick={() => desligarGrupo(grupo.id)}
+                          >
+                            {t("Desligar grupo")}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      {filtradas.map((capacidade) => {
+                        const marcada = value.includes(capacidade.name);
+                        return (
+                          <FichaCapacidade
+                            key={capacidade.name}
+                            capacidade={capacidade}
+                            marcada={marcada}
+                            bloqueada={!marcada && (cheio || !capacidade.marcavel)}
+                            onToggle={() => alternarCapacidade(capacidade.name)}
+                            disabled={disabled}
+                            mostrarNomeTecnico
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         ) : null}
       </div>

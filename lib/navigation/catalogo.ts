@@ -715,8 +715,8 @@ export const NAV_CATALOG = [
   },
   {
     href: "/app/settings/template",
-    label: "Segmento & Nomenclaturas",
-    description: "Escolha o modelo do seu negócio (Clínica, Barbearia, etc.) e adapte os termos do CRM.",
+    label: "Templates de Negócio",
+    description: "Escolha o modelo do seu negócio (Clínica, Barbearia, Escritório, Imobiliária, Serviços ou Vendas) e adapte os termos do CRM.",
     icon: "Storefront",
     group: "organizacao",
     section: "Sua empresa",

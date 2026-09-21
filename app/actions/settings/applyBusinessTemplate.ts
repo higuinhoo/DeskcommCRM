@@ -50,6 +50,11 @@ export async function applyBusinessTemplate(
         products_plural: template.vocabulary.products,
         deals_plural: template.vocabulary.deals,
         pipeline_name: template.vocabulary.pipeline_name,
+        appointment_singular: template.vocabulary.appointment_singular,
+        appointment_plural: template.vocabulary.appointment_plural,
+        new_appointment_button: template.vocabulary.new_appointment_button,
+        calendar_title: template.vocabulary.calendar_title,
+        calendar_subtitle: template.vocabulary.calendar_subtitle,
       },
     };
 
@@ -95,9 +100,34 @@ export async function applyBusinessTemplate(
       }
     }
 
+    // 3. Atualiza/Cria os tipos de agendamento na agenda correspondentes ao segmento
+    if (template.defaultEventTypes && template.defaultEventTypes.length > 0) {
+      for (let i = 0; i < template.defaultEventTypes.length; i++) {
+        const et = template.defaultEventTypes[i]!;
+        await supabase
+          .from("calendar_event_types")
+          .upsert(
+            {
+              organization_id: activeOrg.orgId,
+              name: et.name,
+              slug: `${templateId}-${et.slug}`,
+              category: et.category,
+              duration_minutes: et.duration_minutes,
+              description: et.description,
+              position: (i + 1) * 1000,
+              is_active: true,
+              location_kind: "in_person",
+            },
+            { onConflict: "organization_id, slug" },
+          );
+      }
+    }
+
     revalidatePath("/app/assistant");
     revalidatePath("/app/settings");
     revalidatePath("/app/settings/template");
+    revalidatePath("/app/settings/tenant/agenda");
+    revalidatePath("/app/agenda");
     revalidatePath("/app/contacts");
     revalidatePath("/app/products");
     revalidatePath("/app/kanban");

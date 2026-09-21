@@ -5,6 +5,7 @@ import { ClientePelaAgenda } from "@/components/agenda/ClientePelaAgenda";
 import { DiasBloqueados } from "@/components/agenda/DiasBloqueados";
 
 import { useT } from "@/hooks/i18n/useT";
+import { useBusinessVocabulary } from "@/hooks/useBusinessVocabulary";
 import { parseReaisToCents } from "@/lib/money";
 
 import * as React from "react";
@@ -319,6 +320,7 @@ export function TiposDeAgendamentoClient({
   podeLigarClientePelaAgenda: boolean;
 }) {
   const t = useT();
+  const vocab = useBusinessVocabulary();
   const router = useRouter();
   const [criando, setCriando] = React.useState(false);
   /**
@@ -406,7 +408,7 @@ export function TiposDeAgendamentoClient({
                   minLength={2}
                   value={rascunho.name}
                   onChange={(e) => setRascunho((r) => ({ ...r, name: e.target.value }))}
-                  placeholder={t("Retorno")}
+                  placeholder={t(vocab.appointment_singular ? `Ex: ${vocab.appointment_singular} Inicial` : "Retorno")}
                   className="rounded-md border border-border bg-surface-elevated p-2 text-sm text-text outline-hidden focus:border-border-strong"
                 />
               </label>
@@ -487,7 +489,7 @@ export function TiposDeAgendamentoClient({
             </form>
           ) : (
             <Button size="sm" data-testid="abrir-novo-tipo" onClick={() => setCriando(true)}>
-              {t("Novo tipo de agendamento")}
+              {t(`Novo tipo de ${vocab.appointment_singular ? vocab.appointment_singular.toLowerCase() : "agendamento"}`)}
             </Button>
           )}
         </div>
@@ -496,7 +498,7 @@ export function TiposDeAgendamentoClient({
       <ul className="flex flex-col gap-2" data-testid="lista-de-tipos">
         {tiposIniciais.length === 0 ? (
           <li data-testid="sem-tipos" className="rounded-lg border border-border bg-surface p-4 text-sm text-text-muted">
-            {t("Nenhum tipo de agendamento ainda. Crie o primeiro para que a Agenda tenha o que oferecer.")}
+            {t(`Nenhum tipo de ${vocab.appointment_singular ? vocab.appointment_singular.toLowerCase() : "agendamento"} ainda. Crie o primeiro para que a Agenda tenha o que oferecer.`)}
           </li>
         ) : null}
         {tiposIniciais.map((tipo) => (

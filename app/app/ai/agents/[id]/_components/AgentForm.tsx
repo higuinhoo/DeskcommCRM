@@ -1112,11 +1112,16 @@ export function AgentForm(props: Props) {
           </Card>
 
           {/* Capacidades */}
-          <Card className="space-y-2 p-4">
-            <h3 className="text-sm font-medium">{t("O que o agente pode fazer")}</h3>
+          <Card className="space-y-3 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-medium">{t("O que o agente pode fazer")}</h3>
+              <Badge variant="outline" className="text-[11px] font-normal text-muted-foreground">
+                {t("Agendamento, Vendas, Atendimento & Operação")}
+              </Badge>
+            </div>
             <p className="text-xs text-muted-foreground">
               {t(
-                "Ligue por jornada de trabalho. O agente só consegue fazer o que estiver ligado aqui — e o que estiver ligado, ele fará sozinho durante o atendimento.",
+                "Ligue por jornada de trabalho ou escolha por grupo temático (Agendamento, Atendimento, Vendas, etc.). O agente só consegue fazer o que estiver ligado aqui — e o que estiver ligado, ele fará sozinho durante o atendimento.",
               )}
             </p>
             <ToolPicker

@@ -152,6 +152,8 @@ export async function validateVertexKey(apiKey: string): Promise<ValidationResul
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.5-pro",
+        "claude-3-5-haiku",
+        "claude-3-5-haiku-20241022",
       ],
     };
   } catch (err) {

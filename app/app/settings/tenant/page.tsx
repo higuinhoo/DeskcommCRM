@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { requireAuth, resolveActiveOrg } from "@/lib/auth/server";
@@ -52,6 +53,21 @@ export default async function TenantSettingsPage() {
           {traduzir("Dados da empresa, retenção de mídia, DPO. Admin only.", idioma)}
         </p>
       </header>
+
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 p-4">
+        <div>
+          <h2 className="text-sm font-semibold">{traduzir("Templates de Negócio e Nomenclaturas", idioma)}</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {traduzir("Adapte o CRM para o seu nicho (Clínica, Barbearia, Imobiliária, Serviços, etc.) com termos personalizados.", idioma)}
+          </p>
+        </div>
+        <Link
+          href="/app/settings/template"
+          className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+        >
+          {traduzir("Configurar Template", idioma)}
+        </Link>
+      </div>
       {row && (
         <TenantForm
           initial={{

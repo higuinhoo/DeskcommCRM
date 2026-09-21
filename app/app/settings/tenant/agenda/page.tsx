@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { requireAuth, resolveActiveOrg } from "@/lib/auth/server";
@@ -6,6 +7,7 @@ import { ROLE_RANK } from "@/lib/auth/types";
 import { createClient } from "@/lib/supabase/server";
 import { clientePelaAgendaLigado } from "@/lib/schemas/settings";
 import { nomesDosAtendentes } from "@/lib/users/nome-do-atendente";
+import { getTemplate } from "@/lib/templates/business-templates";
 
 import { TiposDeAgendamentoClient, type TipoRow } from "./_client";
 
@@ -78,13 +80,36 @@ export default async function TiposDeAgendamentoPage() {
   // declarada, e o fallback abaixo volta ao rótulo de hoje. Degrada, não some.
   const nomes = await nomesDosAtendentes((pessoas ?? []).map((p) => String(p.user_id)));
 
+  const templateId = (org?.settings as Record<string, unknown> | undefined)?.business_template as string | undefined;
+  const template = getTemplate(templateId);
+
   return (
     <div className="flex h-full flex-col gap-6 p-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">{t("Tipos de agendamento")}</h1>
-        <p className="mt-1 text-sm text-text-muted">
-          {t("O que se pode marcar, quanto dura e quem atende. É isto que a tela de marcar e o agente de IA oferecem ao cliente.")}
-        </p>
+      <header className="space-y-3">
+        <Link
+          href="/app/agenda"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          ← {t("Voltar para a Agenda")}
+        </Link>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              {t("Tipos de agendamento & Atendimento")}
+            </h1>
+            <p className="mt-1 text-sm text-text-muted">
+              {t("O que se pode marcar, quanto dura e quem atende. É isto que a Agenda e o agente de IA oferecem ao cliente.")}
+            </p>
+          </div>
+          <Link
+            href="/app/settings/template"
+            className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/40 px-3 py-1 text-xs text-muted-foreground hover:bg-muted/80 hover:text-foreground transition-colors"
+            title={t("Mudar segmento do negócio")}
+          >
+            <span>{template.icon}</span>
+            <span className="font-medium">{template.label}</span>
+          </Link>
+        </div>
       </header>
       <TiposDeAgendamentoClient
         tiposIniciais={(tipos ?? []) as TipoRow[]}

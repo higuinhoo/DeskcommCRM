@@ -1,12 +1,20 @@
 /**
  * Definições canônicas dos 6 Templates de Negócio para o DeskcommCRM.
- * Adapta nomenclaturas das telas, funis e assistente de IA por segmento.
+ * Adapta nomenclaturas das telas, funis, agenda e assistente de IA por segmento.
  */
 
 export interface ServiceItem {
   id: string;
   name: string;
   price: string;
+  description: string;
+}
+
+export interface EventTypeTemplate {
+  name: string;
+  slug: string;
+  category: "consulta" | "procedimento" | "retorno" | "visita" | "vistoria" | "reuniao" | "call" | "orcamento" | "demonstracao" | "outro";
+  duration_minutes: number;
   description: string;
 }
 
@@ -20,6 +28,11 @@ export interface BusinessVocabulary {
   pipeline_name: string;
   won_label: string;
   lost_label: string;
+  appointment_singular: string;
+  appointment_plural: string;
+  new_appointment_button: string;
+  calendar_title: string;
+  calendar_subtitle: string;
 }
 
 export interface BusinessTemplateDef {
@@ -29,6 +42,7 @@ export interface BusinessTemplateDef {
   description: string;
   vocabulary: BusinessVocabulary;
   defaultServices: ServiceItem[];
+  defaultEventTypes: EventTypeTemplate[];
   assistant: {
     name: string;
     presentation: string;
@@ -62,11 +76,21 @@ export const BUSINESS_TEMPLATES: Record<TemplateId, BusinessTemplateDef> = {
       pipeline_name: "Fluxo de Atendimento Clínico",
       won_label: "Consulta Realizada",
       lost_label: "Faltou / Cancelou",
+      appointment_singular: "Consulta",
+      appointment_plural: "Consultas",
+      new_appointment_button: "Nova consulta",
+      calendar_title: "Agenda de Consultas & Pacientes",
+      calendar_subtitle: "Consultas, procedimentos e retornos de pacientes marcados.",
     },
     defaultServices: [
       { id: "1", name: "Consulta Inicial / Avaliação", price: "R$ 200,00", description: "Avaliação clínica completa, anamnese e direcionamento terapêutico." },
       { id: "2", name: "Consulta de Retorno", price: "Incluso em até 30 dias", description: "Acompanhamento do tratamento e análise de exames." },
       { id: "3", name: "Procedimento Especializado", price: "A partir de R$ 350,00", description: "Execução de procedimentos e aplicação de protocolos específicos." },
+    ],
+    defaultEventTypes: [
+      { name: "Consulta Inicial / Avaliação", slug: "consulta-inicial", category: "consulta", duration_minutes: 45, description: "Primeira consulta para anamnese clínica e diagnóstico." },
+      { name: "Consulta de Retorno", slug: "consulta-retorno", category: "retorno", duration_minutes: 30, description: "Acompanhamento de tratamento, evolução e exames." },
+      { name: "Procedimento Clínico Especializado", slug: "procedimento-clinico", category: "procedimento", duration_minutes: 60, description: "Execução de procedimento clínico ou terapêutico." },
     ],
     assistant: {
       name: "Secretária Virtual da Clínica",
@@ -98,12 +122,22 @@ export const BUSINESS_TEMPLATES: Record<TemplateId, BusinessTemplateDef> = {
       pipeline_name: "Fila de Atendimento & Horários",
       won_label: "Atendimento Concluído",
       lost_label: "Cancelou / Não compareceu",
+      appointment_singular: "Horário",
+      appointment_plural: "Horários Agendados",
+      new_appointment_button: "Novo horário",
+      calendar_title: "Agenda da Barbearia & Salão",
+      calendar_subtitle: "Cortes, barbas e atendimentos agendados com os profissionais.",
     },
     defaultServices: [
       { id: "1", name: "Corte de Cabelo (Degradê / Tesoura)", price: "R$ 50,00", description: "Corte personalizado, lavagem e finalização com pomada modeladora." },
       { id: "2", name: "Barba Completa (Terapia & Navalha)", price: "R$ 40,00", description: "Toalha quente, hidratação com óleo essencial e alinhamento com navalha." },
       { id: "3", name: "Combo Cabelo + Barba", price: "R$ 80,00", description: "Experiência completa com desconto especial no combo." },
       { id: "4", name: "Sobrancelha na Navalha / Pinça", price: "R$ 20,00", description: "Alinhamento e limpeza rápida do desenho da sobrancelha." },
+    ],
+    defaultEventTypes: [
+      { name: "Corte de Cabelo", slug: "corte-cabelo", category: "procedimento", duration_minutes: 30, description: "Corte de cabelo tradicional, degradê ou tesoura com finalização." },
+      { name: "Barba Terapia Completa", slug: "barba-terapia", category: "procedimento", duration_minutes: 30, description: "Barba completa na navalha com toalha quente e massagem." },
+      { name: "Combo Cabelo + Barba", slug: "combo-cabelo-barba", category: "procedimento", duration_minutes: 60, description: "Serviço completo de corte e barba." },
     ],
     assistant: {
       name: "Atendente da Barbearia",
@@ -135,11 +169,21 @@ export const BUSINESS_TEMPLATES: Record<TemplateId, BusinessTemplateDef> = {
       pipeline_name: "Jornada de Contratação",
       won_label: "Contrato Fechado",
       lost_label: "Não Contratou",
+      appointment_singular: "Reunião",
+      appointment_plural: "Reuniões",
+      new_appointment_button: "Nova reunião",
+      calendar_title: "Agenda de Reuniões & Audiências",
+      calendar_subtitle: "Reuniões presenciais, calls de consultoria e alinhamentos de casos.",
     },
     defaultServices: [
       { id: "1", name: "Consulta Jurídica Especializada", price: "R$ 350,00", description: "Análise prévia de documentos, parecer técnico e definição de estratégia." },
       { id: "2", name: "Assessoria Jurídica Mensal", price: "A partir de R$ 1.500,00/mês", description: "Consultoria preventiva e contenciosa contínua para empresas." },
       { id: "3", name: "Elaboração e Revisão Contratual", price: "A partir de R$ 800,00", description: "Redação de minutas personalizadas com blindagem jurídica completa." },
+    ],
+    defaultEventTypes: [
+      { name: "Reunião de Diagnóstico", slug: "reuniao-diagnostico", category: "reuniao", duration_minutes: 45, description: "Alinhamento inicial de demanda, diagnóstico e escopo." },
+      { name: "Call de Consultoria", slug: "call-consultoria", category: "call", duration_minutes: 30, description: "Sessão remota via Google Meet para consultoria e dúvidas." },
+      { name: "Apresentação de Proposta / Honorários", slug: "apresentacao-proposta", category: "demonstracao", duration_minutes: 60, description: "Apresentação detalhada da estratégia jurídica e proposta comercial." },
     ],
     assistant: {
       name: "Assistente Jurídico do Escritório",
@@ -171,11 +215,21 @@ export const BUSINESS_TEMPLATES: Record<TemplateId, BusinessTemplateDef> = {
       pipeline_name: "Funil de Locação & Venda",
       won_label: "Negócio Fechado",
       lost_label: "Desistiu / Perdeu",
+      appointment_singular: "Visita",
+      appointment_plural: "Visitas",
+      new_appointment_button: "Agendar visita",
+      calendar_title: "Agenda de Visitas & Vistorias",
+      calendar_subtitle: "Visitas a imóveis, vistorias de entrada/saída e reuniões de proposta.",
     },
     defaultServices: [
       { id: "1", name: "Apartamento 2 Quartos (Locação)", price: "R$ 2.200,00/mês", description: "Imóvel semi-mobiliado, com vaga de garagem e área de lazer completa." },
       { id: "2", name: "Casa em Condomínio Fechado (Venda)", price: "R$ 750.000,00", description: "3 suítes, piscina privativa e segurança 24 horas." },
       { id: "3", name: "Avaliação Mercadológica de Imóvel", price: "Sob consulta", description: "Laudo completo para precificação precisa de venda ou locação." },
+    ],
+    defaultEventTypes: [
+      { name: "Visita ao Imóvel", slug: "visita-imovel", category: "visita", duration_minutes: 60, description: "Visita presencial com o cliente ao imóvel de interesse." },
+      { name: "Vistoria Técnica de Imóvel", slug: "vistoria-imovel", category: "vistoria", duration_minutes: 45, description: "Vistoria técnica de entrada ou de entrega de chaves." },
+      { name: "Reunião de Proposta / Negociação", slug: "reuniao-proposta", category: "reuniao", duration_minutes: 30, description: "Alinhamento de valores de permuta, financiamento e contrato." },
     ],
     assistant: {
       name: "Consultor Imobiliário Virtual",
@@ -207,11 +261,21 @@ export const BUSINESS_TEMPLATES: Record<TemplateId, BusinessTemplateDef> = {
       pipeline_name: "Fluxo de Ordens de Serviço",
       won_label: "OS Concluída e Paga",
       lost_label: "Orçamento Recusado",
+      appointment_singular: "Visita Técnica",
+      appointment_plural: "Atendimentos Técnicos",
+      new_appointment_button: "Novo atendimento técnico",
+      calendar_title: "Agenda de Atendimentos & Manutenção",
+      calendar_subtitle: "Visitas técnicas para orçamento, execuções de serviços e entregas.",
     },
     defaultServices: [
       { id: "1", name: "Visita Técnica & Diagnóstico", price: "R$ 90,00", description: "Avaliação técnica no local com teste de bancada e orçamento detalhado." },
       { id: "2", name: "Manutenção Preventiva / Higienização", price: "R$ 180,00", description: "Limpeza completa, lubrificação e reaperto dos componentes." },
       { id: "3", name: "Reparo e Troca de Componentes", price: "Sob orçamento", description: "Substituição de peças com garantia de 90 dias e nota fiscal." },
+    ],
+    defaultEventTypes: [
+      { name: "Visita Técnica / Orçamento no Local", slug: "visita-tecnica", category: "orcamento", duration_minutes: 60, description: "Avaliação presencial no local para levantamento de orçamento." },
+      { name: "Execução de Serviço Técnico", slug: "execucao-servico", category: "procedimento", duration_minutes: 90, description: "Realização do serviço técnico de manutenção ou reparo." },
+      { name: "Validação & Entrega Técnica", slug: "entrega-validacao", category: "outro", duration_minutes: 30, description: "Testes finais de bancada, validação e entrega ao cliente." },
     ],
     assistant: {
       name: "Atendente de Serviços e Suporte",
@@ -243,11 +307,21 @@ export const BUSINESS_TEMPLATES: Record<TemplateId, BusinessTemplateDef> = {
       pipeline_name: "Funil de Vendas Comercial",
       won_label: "Venda Fechada",
       lost_label: "Negócio Perdido",
+      appointment_singular: "Agendamento",
+      appointment_plural: "Agendamentos",
+      new_appointment_button: "Novo agendamento",
+      calendar_title: "Agenda Comercial & Demonstrações",
+      calendar_subtitle: "Reuniões comerciais, demonstrações de produtos e alinhamentos de fechamento.",
     },
     defaultServices: [
       { id: "1", name: "Kit Promocional Mais Vendido", price: "R$ 149,90", description: "Pacote completo com nossos itens mais procurados e frete reduzido." },
       { id: "2", name: "Produto Premium / Edição Especial", price: "R$ 289,00", description: "Acabamento de alta durabilidade com garantia estendida de 1 ano." },
       { id: "3", name: "Plano Corporativo / Atacado", price: "Consulte tabela de quantidade", description: "Descontos progressivos a partir de 10 unidades com faturamento para PJ." },
+    ],
+    defaultEventTypes: [
+      { name: "Demonstração de Soluções", slug: "demonstracao-solucoes", category: "demonstracao", duration_minutes: 30, description: "Apresentação guiada dos produtos e soluções do catálogo." },
+      { name: "Reunião Comercial de Apresentação", slug: "reuniao-comercial", category: "reuniao", duration_minutes: 45, description: "Reunião de alinhamento de proposta e condições comerciais." },
+      { name: "Alinhamento & Fechamento", slug: "alinhamento-fechamento", category: "reuniao", duration_minutes: 30, description: "Sessão de alinhamento final para assinatura e contrato." },
     ],
     assistant: {
       name: "Assistente Comercial e Vendas",
@@ -274,4 +348,3 @@ export function getTemplate(id: string | null | undefined): BusinessTemplateDef 
   }
   return BUSINESS_TEMPLATES.vendas as BusinessTemplateDef;
 }
-
