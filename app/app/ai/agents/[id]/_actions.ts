@@ -195,7 +195,7 @@ export async function saveAgentDraftAction(
   //      `draft`.
   const { data: versoes } = await admin
     .from("ai_agent_versions")
-    .select("id, version_number, status")
+    .select("id, version_number, status, assistant_config")
     .eq("organization_id", activeOrg.orgId)
     .eq("agent_id", agentId)
     .order("version_number", { ascending: false });
@@ -215,7 +215,11 @@ export async function saveAgentDraftAction(
     agent.published_version_id ?? null,
   );
 
-  if (existingDraft) {
+  const isAssistantConfigDraft = Boolean(
+    existingDraft && (existingDraft as { assistant_config?: unknown }).assistant_config,
+  );
+
+  if (existingDraft && !isAssistantConfigDraft) {
     // PATCH na draft existente — não infla a sequência de versions.
     const patchValidated = versionPatchSchema.safeParse(payload);
     if (!patchValidated.success) {
@@ -230,49 +234,50 @@ export async function saveAgentDraftAction(
       .select(VERSION_COLUMNS)
       .single();
 
-    if (error || !updated) {
+    if (!error && updated) {
+      void audit({
+        action: "ai_agent.version_updated",
+        actorUserId: authUser.id,
+        organizationId: activeOrg.orgId,
+        resourceType: "ai_agent_version",
+        resourceId: existingDraft.id,
+        requestId,
+        metadata: { agent_id: agentId, fields: Object.keys(update) },
+      });
+
+      if (cadastroParsed?.success) {
+        const r = await gravarCadastroDoAgente(admin, {
+          agentId,
+          orgId: activeOrg.orgId,
+          actorUserId: authUser.id,
+          requestId,
+          atual: agent,
+          pedido: cadastroParsed.data,
+        });
+        if ("erro" in r) {
+          return {
+            ok: false,
+            error: "internal_error",
+            message: `O rascunho foi salvo, mas o cadastro do agente não: ${r.erro}`,
+          };
+        }
+        if (r.mudou.length > 0) revalidatePath("/app/ai/agents");
+      }
+
+      revalidatePath(`/app/ai/agents/${agentId}`);
+      return {
+        ok: true,
+        data: {
+          version_id: existingDraft.id,
+          version_number: existingDraft.version_number,
+        },
+      };
+    }
+
+    if (!error?.message?.includes("assistant_create_new_draft")) {
       return { ok: false, error: "internal_error", message: error?.message };
     }
-
-    void audit({
-      action: "ai_agent.version_updated",
-      actorUserId: authUser.id,
-      organizationId: activeOrg.orgId,
-      resourceType: "ai_agent_version",
-      resourceId: existingDraft.id,
-      requestId,
-      metadata: { agent_id: agentId, fields: Object.keys(update) },
-    });
-
-    if (cadastroParsed?.success) {
-      const r = await gravarCadastroDoAgente(admin, {
-        agentId,
-        orgId: activeOrg.orgId,
-        actorUserId: authUser.id,
-        requestId,
-        atual: agent,
-        pedido: cadastroParsed.data,
-      });
-      // As duas escritas não são atômicas. O desfecho tem de dizer o que
-      // gravou: um toast verde genérico aqui reproduz o defeito com outra cara.
-      if ("erro" in r) {
-        return {
-          ok: false,
-          error: "internal_error",
-          message: `O rascunho foi salvo, mas o cadastro do agente não: ${r.erro}`,
-        };
-      }
-      if (r.mudou.length > 0) revalidatePath("/app/ai/agents");
-    }
-
-    revalidatePath(`/app/ai/agents/${agentId}`);
-    return {
-      ok: true,
-      data: {
-        version_id: existingDraft.id,
-        version_number: existingDraft.version_number,
-      },
-    };
+    // Se o banco rejeitou com assistant_create_new_draft, cai para criar nova versão abaixo.
   }
 
   // Cria draft v(max+1) com retry em 23505.

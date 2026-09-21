@@ -87,7 +87,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx): Promise<Response> {
   const admin = createAdminClient();
   const { data: existing } = await admin
     .from("ai_agent_versions")
-    .select("id, status, agent_id, organization_id")
+    .select("id, status, agent_id, organization_id, assistant_config")
     .eq("id", vid)
     .eq("organization_id", activeOrg.orgId)
     .eq("agent_id", id)
@@ -98,6 +98,12 @@ export async function PATCH(req: NextRequest, ctx: Ctx): Promise<Response> {
     return fail("version_immutable", t("Apenas versões 'draft' podem ser editadas."), 409, {
       requestId,
       details: { current_status: existing.status },
+    });
+  }
+  if ((existing as { assistant_config?: unknown }).assistant_config != null) {
+    return fail("version_immutable", t("Esta versão foi gerada pelo assistente guiado e não pode ser editada diretamente. Crie um novo rascunho."), 409, {
+      requestId,
+      code: "assistant_create_new_draft",
     });
   }
 
