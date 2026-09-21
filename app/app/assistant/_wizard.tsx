@@ -47,7 +47,7 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
   const [testResponse, setTestResponse] = useState("");
 
   function applyNicheTemplate(key: string) {
-    const tpl = CANONICAL_TEMPLATES[key];
+    const tpl = CANONICAL_TEMPLATES[key as keyof typeof CANONICAL_TEMPLATES];
     if (!tpl) return;
     setVersionId(null); setTestedVersionId(null);
     setConfig(c => ({

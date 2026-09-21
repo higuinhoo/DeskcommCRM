@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { BUSINESS_TEMPLATES, type BusinessTemplateDef } from "@/lib/templates/business-templates";
+import { BUSINESS_TEMPLATES, getTemplate, type BusinessTemplateDef } from "@/lib/templates/business-templates";
 import { applyBusinessTemplate } from "@/app/actions/settings/applyBusinessTemplate";
 
 interface Props {
@@ -17,7 +17,7 @@ export function TemplateSelectorClient({ currentTemplateId: initialTemplateId }:
   const [isPending, startTransition] = useTransition();
 
   const templatesList = Object.values(BUSINESS_TEMPLATES);
-  const currentTemplate = BUSINESS_TEMPLATES[selectedId] || BUSINESS_TEMPLATES.vendas;
+  const currentTemplate: BusinessTemplateDef = getTemplate(selectedId);
 
   function handleApply(t: BusinessTemplateDef) {
     startTransition(async () => {

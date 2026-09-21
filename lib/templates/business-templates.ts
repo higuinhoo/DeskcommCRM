@@ -267,7 +267,9 @@ export const TEMPLATE_KEYS = Object.keys(BUSINESS_TEMPLATES) as Array<keyof type
 
 export function getTemplate(id: string | null | undefined): BusinessTemplateDef {
   if (id && id in BUSINESS_TEMPLATES) {
-    return BUSINESS_TEMPLATES[id];
+    const found = BUSINESS_TEMPLATES[id as keyof typeof BUSINESS_TEMPLATES];
+    if (found) return found;
   }
   return BUSINESS_TEMPLATES.vendas;
 }
+

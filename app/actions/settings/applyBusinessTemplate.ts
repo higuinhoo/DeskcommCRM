@@ -23,7 +23,7 @@ export async function applyBusinessTemplate(
     const activeOrg = await resolveActiveOrg(user);
     if (!activeOrg) return { ok: false, error: "Organização não encontrada" };
 
-    const template = BUSINESS_TEMPLATES[templateId];
+    const template = BUSINESS_TEMPLATES[templateId as keyof typeof BUSINESS_TEMPLATES];
     if (!template) return { ok: false, error: "Template não encontrado" };
 
     const supabase = await createClient();
