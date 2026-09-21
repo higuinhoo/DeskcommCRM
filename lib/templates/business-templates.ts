@@ -44,7 +44,9 @@ export interface BusinessTemplateDef {
   };
 }
 
-export const BUSINESS_TEMPLATES: Record<string, BusinessTemplateDef> = {
+export type TemplateId = "clinica" | "barbearia" | "escritorio" | "imobiliaria" | "servicos" | "vendas";
+
+export const BUSINESS_TEMPLATES: Record<TemplateId, BusinessTemplateDef> = {
   clinica: {
     id: "clinica",
     label: "Clínica & Consultório",
@@ -267,9 +269,9 @@ export const TEMPLATE_KEYS = Object.keys(BUSINESS_TEMPLATES) as Array<keyof type
 
 export function getTemplate(id: string | null | undefined): BusinessTemplateDef {
   if (id && id in BUSINESS_TEMPLATES) {
-    const found = BUSINESS_TEMPLATES[id as keyof typeof BUSINESS_TEMPLATES];
+    const found = BUSINESS_TEMPLATES[id as TemplateId];
     if (found) return found;
   }
-  return BUSINESS_TEMPLATES.vendas;
+  return BUSINESS_TEMPLATES.vendas as BusinessTemplateDef;
 }
 
