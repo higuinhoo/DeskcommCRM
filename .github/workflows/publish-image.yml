@@ -825,3 +825,46 @@ jobs:
             [ "$APP" = "success" ]
             [ "$FUNDO" = "success" ]
           fi
+
+  deploy-vps:
+    name: Deploy automático na VPS
+    needs: [imagens-ok]
+    if: |
+      always() &&
+      needs.imagens-ok.result == 'success' &&
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Executar deploy via SSH na VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VPS_HOST:-}" ] || [ -z "${VPS_SSH_KEY:-}" ]; then
+            echo "Secrets VPS_HOST e/ou VPS_SSH_KEY não configurados. Pulando deploy automático."
+            exit 0
+          fi
+
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          echo "==> Conectando na VPS (${VPS_USER}@${VPS_HOST})..."
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa "${VPS_USER}@${VPS_HOST}" bash << 'EOF'
+            set -euo pipefail
+            cd /opt/deskcommcrm
+            echo "==> 1. Atualizando repositório na VPS..."
+            git pull origin main || true
+            echo "==> 2. Puxando imagem mais recente do GHCR..."
+            sudo docker compose -f docker-compose.prod.yml pull app
+            echo "==> 3. Recriando contêiner do app..."
+            sudo docker compose -f docker-compose.prod.yml up -d --no-deps app
+            echo "==> 4. Verificando status..."
+            sleep 8
+            sudo docker ps --filter name=deskcommcrm-app-1
+            echo "==> Deploy concluído com sucesso!"
+          EOF
+
