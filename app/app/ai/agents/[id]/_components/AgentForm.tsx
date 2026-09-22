@@ -524,8 +524,73 @@ export function AgentForm(props: Props) {
     }
   }
 
+  async function handleSaveAndPublish() {
+    if (!isValid) {
+      const first = Object.values(validation)[0];
+      toast.error(first ?? t("Formulário inválido."));
+      return;
+    }
+    setPublishing(true);
+    try {
+      if (isEdit) {
+        const cadastro = agentMcpPatchSchema.safeParse(toCadastroPayload(form));
+        if (!cadastro.success) {
+          toast.error(t("Validação falhou."));
+          return;
+        }
+        let versionIdToPublish = props.draft?.id;
+        if (dirty || !versionIdToPublish) {
+          const res = await saveAgentDraftAction(
+            props.agent.id,
+            toVersionPayload(form),
+            cadastro.data,
+          );
+          if (!res.ok) {
+            toast.error(res.message ?? `${t("Erro")}: ${res.error}`);
+            return;
+          }
+          versionIdToPublish = res.data!.version_id;
+        }
+        const pubRes = await publishAgentAction(props.agent.id, versionIdToPublish);
+        if (!pubRes.ok) {
+          toast.error(`${t("Rascunho salvo, mas falha ao ativar:")} ${pubRes.error}`);
+          router.refresh();
+          return;
+        }
+        toast.success(t("Alterações salvas e ativadas com sucesso!"));
+        router.refresh();
+      } else {
+        const payload = {
+          name: form.name,
+          description: form.description.trim() === "" ? undefined : form.description,
+          priority: form.priority,
+          version: toVersionPayload(form),
+        };
+        const validated = agentMcpCreateSchema.safeParse(payload);
+        if (!validated.success) {
+          toast.error(t("Validação falhou."));
+          return;
+        }
+        const res = await createMcpAgentAction(validated.data);
+        if (!res.ok) {
+          toast.error(res.message ?? `${t("Erro")}: ${res.error}`);
+          return;
+        }
+        await publishAgentAction(res.data!.agent_id, res.data!.version_id);
+        toast.success(t("Agente criado e ativado com sucesso!"));
+        router.push(`/app/ai/agents/${res.data!.agent_id}`);
+      }
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   async function handlePublish() {
-    if (!isEdit || !props.draft) return;
+    if (!isEdit) return;
+    if (dirty) {
+      return handleSaveAndPublish();
+    }
+    if (!props.draft) return;
     setPublishing(true);
     try {
       const res = await publishAgentAction(props.agent.id, props.draft.id);
@@ -636,14 +701,29 @@ export function AgentForm(props: Props) {
               {t("Descartar alterações")}
             </Button>
           ) : null}
-          <Button onClick={handleSave} disabled={(!dirty && isEdit) || disabled || !isValid}>
+          <Button
+            variant="default"
+            onClick={handleSaveAndPublish}
+            disabled={disabled || !isValid || (isEdit && !dirty && !props.draft)}
+          >
+            {publishing
+              ? t("Salvando e ativando…")
+              : isEdit
+                ? t("Salvar e Ativar")
+                : t("Criar e Ativar")}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={handleSave}
+            disabled={(!dirty && isEdit) || disabled || !isValid}
+          >
             {saving ? t("Salvando…") : isEdit ? t("Salvar rascunho") : t("Criar agente")}
           </Button>
           {isEdit ? (
             <span title={publishBlockReason ?? undefined}>
               <Button
-                variant="default"
-                onClick={() => setConfirmOpen(true)}
+                variant="outline"
+                onClick={handlePublish}
                 disabled={disabled || publishBlockReason !== null}
                 aria-describedby={publishBlockReason ? ID_DO_MOTIVO_DO_PUBLICAR : undefined}
               >

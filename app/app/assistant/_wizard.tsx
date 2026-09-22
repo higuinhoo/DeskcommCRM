@@ -113,6 +113,43 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
     setConfig(c => ({ ...c, [key]: value }));
   }
 
+  async function saveAndPublishDirectly() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const res = await fetch(`/api/v1/ai/assistant/save`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agent_id: localAgentId, assistant_config: config }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message ?? "Não foi possível salvar.");
+      const currentAgentId = data.data?.agent_id ?? localAgentId;
+      if (data.data?.agent_id) setLocalAgentId(data.data.agent_id);
+      const newVersionId = data.data?.version_id;
+      setVersionId(newVersionId);
+
+      if (!currentAgentId || !newVersionId) {
+        throw new Error("Agente ou versão não identificados.");
+      }
+
+      const pubRes = await fetch(`/api/v1/ai/agents/${currentAgentId}/publish`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ version_id: newVersionId }),
+      });
+      const pubData = await pubRes.json();
+      if (!pubRes.ok) throw new Error(pubData.error?.message ?? "Não foi possível ativar a nova versão.");
+
+      setTestedVersionId(newVersionId);
+      setMessage(`Alterações salvas e ativadas com sucesso! Versão ${data.data?.version_number ?? ""} ativa no atendimento.`);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Erro inesperado ao salvar e ativar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveDraft() {
     setBusy(true); setMessage("");
     try {
@@ -154,7 +191,7 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
   }
 
   async function publish() {
-    if (!localAgentId || !versionId || testedVersionId !== versionId) return;
+    if (!localAgentId || !versionId) return;
     setBusy(true); setMessage("");
     try {
       const res = await fetch(`/api/v1/ai/agents/${localAgentId}/publish`, {
@@ -164,7 +201,7 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message ?? "Não foi possível publicar.");
-      setMessage("Assistente publicado com sucesso! A nova versão foi selecionada. O estado de pausa do assistente foi preservado.");
+      setMessage("Assistente publicado e ativo com sucesso! A nova versão foi selecionada.");
       setStep("config");
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Erro ao publicar.");
@@ -219,7 +256,7 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
         {(["config", "test", "publish"] as const).map((s, i) => (
           <button
             key={s}
-            disabled={busy || (s === "test" && !versionId) || (s === "publish" && (!versionId || testedVersionId !== versionId))}
+            disabled={busy || ((s === "test" || s === "publish") && !versionId)}
             onClick={() => setStep(s)}
             className={`flex items-center gap-2 rounded-t-lg px-4 py-2.5 transition-colors ${
               step === s
@@ -607,9 +644,12 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
             </div>
           </section>
 
-          <div className="flex items-center gap-3 pt-2">
-            <Button size="lg" onClick={saveDraft} disabled={busy}>
-              {busy ? "Salvando…" : "Salvar e Avançar para Teste →"}
+          <div className="flex flex-wrap items-center gap-3 pt-2">
+            <Button size="lg" onClick={saveAndPublishDirectly} disabled={busy}>
+              {busy ? "Salvando e ativando…" : "Salvar e Ativar Alterações"}
+            </Button>
+            <Button size="lg" variant="outline" onClick={saveDraft} disabled={busy}>
+              {busy ? "Salvando…" : "Testar conversa antes de ativar →"}
             </Button>
           </div>
         </div>
@@ -633,7 +673,7 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
           )}
           <div className="flex gap-3 pt-2">
             <Button variant="outline" onClick={() => setStep("config")}>← Voltar e editar</Button>
-            <Button onClick={() => setStep("publish")} disabled={!versionId || testedVersionId !== versionId}>Continuar para publicar →</Button>
+            <Button onClick={() => setStep("publish")} disabled={!versionId}>Continuar para publicar →</Button>
           </div>
         </div>
       )}
@@ -642,11 +682,11 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
         <div className="space-y-4">
           <div className="rounded-lg border bg-green-50 p-4 text-sm space-y-2">
             <p className="font-medium text-green-800">Pronto para publicar</p>
-            <p className="text-green-700">Ao publicar, esta versão testada será usada nos próximos atendimentos. Se o assistente estiver pausado, continuará pausado.</p>
+            <p className="text-green-700">Ao publicar, esta versão será usada nos próximos atendimentos. Se o assistente estiver pausado, continuará pausado.</p>
             <p className="text-green-700">As versões anteriores permanecem no histórico do agente.</p>
           </div>
           <div className="flex gap-3">
-            <Button onClick={publish} disabled={busy || !versionId || testedVersionId !== versionId}>{busy ? "Publicando…" : "Publicar assistente"}</Button>
+            <Button onClick={publish} disabled={busy || !versionId}>{busy ? "Publicando…" : "Publicar assistente"}</Button>
             <Button variant="outline" onClick={() => setStep("test")}>← Voltar para teste</Button>
           </div>
         </div>
