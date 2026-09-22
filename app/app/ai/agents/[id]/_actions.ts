@@ -679,7 +679,7 @@ export async function revertToVersionAction(
 
 export async function createMcpAgentAction(
   payload: unknown,
-): Promise<ActionResult<{ agent_id: string }>> {
+): Promise<ActionResult<{ agent_id: string; version_id: string }>> {
   const guard = await ensureAdmin();
   if (!guard.ok) return guard;
   const { authUser, activeOrg } = guard;
@@ -715,38 +715,39 @@ export async function createMcpAgentAction(
   }
 
   const v = parsed.data.version;
-  const { error: versionErr } = await admin.from("ai_agent_versions").insert({
-    organization_id: activeOrg.orgId,
-    agent_id: agentRow.id,
-    version_number: 1,
-    system_prompt: v.system_prompt,
-    provider: v.provider,
-    model: v.model,
-    credential_id: v.credential_id,
-    tool_ids: v.tool_ids,
-    trigger_config: v.trigger_config ?? undefined,
-    channel_session_id: v.channel_session_id,
-    max_steps: v.max_steps,
-    token_budget: v.token_budget,
-    cost_budget_cents: v.cost_budget_cents,
-    history_message_window: v.history_message_window,
-    history_token_window: v.history_token_window,
-    handoff_keywords: v.handoff_keywords,
-    handoff_tool_enabled: v.handoff_tool_enabled,
-    cases_enabled: v.cases_enabled,
-    split_messages: v.split_messages,
-    split_max_chars: v.split_max_chars,
-    // O corpo ACEITAVA estes cinco e o INSERT os descartava: criar o assistente
-    // pela tela com papel Operador, escopo de funil ou material marcado produzia
-    // uma versão com tudo no default do banco — desligado e vazio.
-    operator_enabled: v.operator_enabled,
-    operator_model: v.operator_model,
-    operator_tool_ids: v.operator_tool_ids,
-    pipeline_ids: v.pipeline_ids,
-    knowledge_source_ids: v.knowledge_source_ids,
-    status: "draft",
-    created_by: authUser.id,
-  });
+  const { data: versionRow, error: versionErr } = await admin
+    .from("ai_agent_versions")
+    .insert({
+      organization_id: activeOrg.orgId,
+      agent_id: agentRow.id,
+      version_number: 1,
+      system_prompt: v.system_prompt,
+      provider: v.provider,
+      model: v.model,
+      credential_id: v.credential_id,
+      tool_ids: v.tool_ids,
+      trigger_config: v.trigger_config ?? undefined,
+      channel_session_id: v.channel_session_id,
+      max_steps: v.max_steps,
+      token_budget: v.token_budget,
+      cost_budget_cents: v.cost_budget_cents,
+      history_message_window: v.history_message_window,
+      history_token_window: v.history_token_window,
+      handoff_keywords: v.handoff_keywords,
+      handoff_tool_enabled: v.handoff_tool_enabled,
+      cases_enabled: v.cases_enabled,
+      split_messages: v.split_messages,
+      split_max_chars: v.split_max_chars,
+      operator_enabled: v.operator_enabled,
+      operator_model: v.operator_model,
+      operator_tool_ids: v.operator_tool_ids,
+      pipeline_ids: v.pipeline_ids,
+      knowledge_source_ids: v.knowledge_source_ids,
+      status: "draft",
+      created_by: authUser.id,
+    })
+    .select("id")
+    .single();
 
   if (versionErr) {
     // Compensação — archiva o agent recém criado para evitar lixo.
@@ -769,5 +770,5 @@ export async function createMcpAgentAction(
   });
 
   revalidatePath("/app/ai/agents");
-  return { ok: true, data: { agent_id: agentRow.id } };
+  return { ok: true, data: { agent_id: agentRow.id, version_id: versionRow?.id ?? "" } };
 }

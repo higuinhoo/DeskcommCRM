@@ -576,9 +576,13 @@ export function AgentForm(props: Props) {
           toast.error(res.message ?? `${t("Erro")}: ${res.error}`);
           return;
         }
-        await publishAgentAction(res.data!.agent_id, res.data!.version_id);
-        toast.success(t("Agente criado e ativado com sucesso!"));
-        router.push(`/app/ai/agents/${res.data!.agent_id}`);
+        if (res.data?.agent_id) {
+          if (res.data.version_id) {
+            await publishAgentAction(res.data.agent_id, res.data.version_id);
+          }
+          toast.success(t("Agente criado e ativado com sucesso!"));
+          router.push(`/app/ai/agents/${res.data.agent_id}`);
+        }
       }
     } finally {
       setPublishing(false);
