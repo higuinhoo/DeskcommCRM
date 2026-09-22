@@ -2105,8 +2105,8 @@ async function executarTurnoDoAgente(
       });
     }
   }
-  // Knobs por-turno: a versão publicada vence o env; sem ela, env (main.ts).
-  const maxSteps = agentConfig?.maxSteps ?? deps.knobs.maxSteps;
+  // Knobs por-turno: a versão publicada vence o env; sem ela, env (main.ts). Teto de 5 evita loops de ferramentas infinitos que explodem tokens.
+  const maxSteps = Math.min(agentConfig?.maxSteps ?? deps.knobs.maxSteps, 5);
   // Fallback de modelo das chamadas AUXILIARES (classificadores/compaction/promessa):
   // knob de env → modelo do agente PUBLICADO na tela → organizations.settings.llm.
   // Sem isso, self-host que configurou tudo pela tela (que não preenche default_model)
@@ -3751,18 +3751,35 @@ async function executarTurnoDoAgente(
     // concorrente entre turnos de leads diferentes), nenhuma decisão de
     // guardrail depende de ordem entre os dois, e o `jailbreak` segue sem vetar
     // o inbound — só flagra o turno no trace.
+    // Auxiliar com timeout seguro: classificadores são ADVISÓRIOS e nunca devem travar a resposta do WhatsApp
+    const comTimeoutAux = async <T>(promise: Promise<T>, timeoutMs = 3000, fallback: T): Promise<T> => {
+      let timer: NodeJS.Timeout | undefined;
+      const timeoutPromise = new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), timeoutMs);
+      });
+      return Promise.race([promise, timeoutPromise])
+        .catch(() => fallback)
+        .finally(() => {
+          if (timer) clearTimeout(timer);
+        });
+    };
+
     const [stageResultado, jailbreakVerdict] = await Promise.all([
       deps.knobs.stageClassifier !== undefined
-        ? classifyStage(
-            pool,
-            deps.llmCfg,
-            { tenantId, leadId: leadId || null, jobId: job?.id },
-            {
-              context: effectiveContext,
-              currentStage,
-              ...argsAux(deps.knobs.stageClassifier.model),
-            },
-            { registry: deps.registry, log: runLog },
+        ? comTimeoutAux(
+            classifyStage(
+              pool,
+              deps.llmCfg,
+              { tenantId, leadId: leadId || null, jobId: job?.id },
+              {
+                context: effectiveContext,
+                currentStage,
+                ...argsAux(deps.knobs.stageClassifier.model),
+              },
+              { registry: deps.registry, log: runLog },
+            ),
+            3000,
+            null,
           )
         : Promise.resolve(null),
       // F4-04: classifier ADVISÓRIO anti-jailbreak sobre a mensagem INBOUND do lead (o
@@ -3770,17 +3787,21 @@ async function executarTurnoDoAgente(
       // checado nele). NÃO veta o inbound — só FLAGRA o turno no trace; flag/level não são PII
       // (a mensagem/reason nunca vão a log). A correlação com promessa fora de tabela escala no fim.
       camadaLigada(camadas.jailbreak, deps.knobs.jailbreak !== undefined)
-        ? classifyJailbreak(
-            pool,
-            deps.llmCfg,
-            { tenantId, leadId: leadId || null, jobId: job?.id },
-            {
-              message: skillSignal,
-              // Knob ausente + organização ligando = roda com o modelo padrão dela,
-              // que é a convenção já usada pelo stageClassifier.
-              ...argsAux(deps.knobs.jailbreak?.model),
-            },
-            { registry: deps.registry, log: runLog },
+        ? comTimeoutAux(
+            classifyJailbreak(
+              pool,
+              deps.llmCfg,
+              { tenantId, leadId: leadId || null, jobId: job?.id },
+              {
+                message: skillSignal,
+                // Knob ausente + organização ligando = roda com o modelo padrão dela,
+                // que é a convenção já usada pelo stageClassifier.
+                ...argsAux(deps.knobs.jailbreak?.model),
+              },
+              { registry: deps.registry, log: runLog },
+            ),
+            3000,
+            null,
           )
         : Promise.resolve(null),
     ]);

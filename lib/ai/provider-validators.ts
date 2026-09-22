@@ -147,13 +147,11 @@ export async function validateVertexKey(apiKey: string): Promise<ValidationResul
     return {
       ok: true,
       models: [
-        "gemini-3.5-flash",
-        "gemini-3.1-pro-preview",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.5-pro",
-        "claude-3-5-haiku",
-        "claude-3-5-haiku-20241022",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
       ],
     };
   } catch (err) {

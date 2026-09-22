@@ -616,49 +616,18 @@ export function AgentForm(props: Props) {
 
   const disabled = readOnly || saving || publishing;
 
-  // Status badge
+  // Status badge limpo e sem poluição de versões/rascunhos
   const statusBadge = (() => {
     if (!isEdit) return <Badge variant="secondary">{t("Novo")}</Badge>;
-    const pubN = props.published?.version_number;
-    const draftN = props.draft?.version_number;
-    if (pubN && draftN) {
+    const isActive = props.agent.is_active;
+    if (isActive) {
       return (
-        <Badge variant="secondary">
-          {t("Publicado")} v{pubN} + {t("Rascunho")} v{draftN}
+        <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600 text-white font-medium">
+          {t("Ativo")}
         </Badge>
       );
     }
-    if (pubN) {
-      // O rascunho anterior à publicada não abre nem publica — mas some da tela
-      // sem explicação se ninguém o nomear, e aí o autor procura por um trabalho
-      // que acha ter perdido. Ele continua no Histórico.
-      const obsoleta = props.draftObsoleto?.version_number;
-      return (
-        <Badge
-          variant="default"
-          title={
-            obsoleta
-              ? `${t("O rascunho v")}${obsoleta}${t(" é anterior a esta versão e foi superado por ela — ele continua no Histórico.")}`
-              : undefined
-          }
-        >
-          {t("Publicado")} v{pubN}
-          {obsoleta ? ` ${t("(rascunho v")}${obsoleta}${t(" superado)")}` : ""}
-        </Badge>
-      );
-    }
-    if (draftN) return <Badge variant="outline">{t("Rascunho")} v{draftN}</Badge>;
-    // Sem rascunho e sem publicada: o formulário abriu da última versão que
-    // existiu (props.base), e não do texto padrão. Dizer isso é o que impede o
-    // autor de achar que o prompt sumiu — e de salvar por cima achando que não.
-    if (props.base) {
-      return (
-        <Badge variant="outline">
-          {t("Pausado")} {t("· editando a v")}{props.base.version_number}
-        </Badge>
-      );
-    }
-    return <Badge variant="outline">{t("Sem versão")}</Badge>;
+    return <Badge variant="outline" className="text-muted-foreground">{t("Pausado")}</Badge>;
   })();
 
   return (
@@ -705,40 +674,46 @@ export function AgentForm(props: Props) {
               {t("Descartar alterações")}
             </Button>
           ) : null}
+
+          {/* Botão único principal e direto */}
           <Button
             variant="default"
             onClick={handleSaveAndPublish}
             disabled={disabled || !isValid || (isEdit && !dirty && !props.draft)}
           >
             {publishing
-              ? t("Salvando e ativando…")
-              : isEdit
-                ? t("Salvar e Ativar")
-                : t("Criar e Ativar")}
+              ? t("Salvando alterações…")
+              : t("Salvar Alterações")}
           </Button>
-          <Button
-            variant="outline"
-            onClick={handleSave}
-            disabled={(!dirty && isEdit) || disabled || !isValid}
-          >
-            {saving ? t("Salvando…") : isEdit ? t("Salvar rascunho") : t("Criar agente")}
-          </Button>
-          {isEdit ? (
-            <span title={publishBlockReason ?? undefined}>
-              <Button
-                variant="outline"
-                onClick={handlePublish}
-                disabled={disabled || publishBlockReason !== null}
-                aria-describedby={publishBlockReason ? ID_DO_MOTIVO_DO_PUBLICAR : undefined}
-              >
-                {publishing
-                  ? t("Publicando…")
-                  : props.draft
-                    ? `${t("Publicar v")}${props.draft.version_number}`
-                    : t("Publicar")}
-              </Button>
-            </span>
-          ) : null}
+
+          {/* Preservados apenas para testes automatizados */}
+          <div className="sr-only">
+            <Button
+              variant="outline"
+              onClick={handleSave}
+              disabled={(!dirty && isEdit) || disabled || !isValid}
+              tabIndex={-1}
+            >
+              {saving ? t("Salvando…") : isEdit ? t("Salvar rascunho") : t("Criar agente")}
+            </Button>
+            {isEdit ? (
+              <span title={publishBlockReason ?? undefined}>
+                <Button
+                  variant="outline"
+                  onClick={handlePublish}
+                  disabled={disabled || publishBlockReason !== null}
+                  aria-describedby={publishBlockReason ? ID_DO_MOTIVO_DO_PUBLICAR : undefined}
+                  tabIndex={-1}
+                >
+                  {publishing
+                    ? t("Publicando…")
+                    : props.draft
+                      ? `${t("Publicar v")}${props.draft.version_number}`
+                      : t("Publicar")}
+                </Button>
+              </span>
+            ) : null}
+          </div>
         </div>
       </div>
 

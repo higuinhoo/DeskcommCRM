@@ -142,7 +142,7 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
       if (!pubRes.ok) throw new Error(pubData.error?.message ?? "Não foi possível ativar a nova versão.");
 
       setTestedVersionId(newVersionId);
-      setMessage(`Alterações salvas e ativadas com sucesso! Versão ${data.data?.version_number ?? ""} ativa no atendimento.`);
+      setMessage("Alterações salvas e ativadas com sucesso!");
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Erro inesperado ao salvar e ativar.");
     } finally {
@@ -238,25 +238,19 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
             <span className="font-medium text-foreground">
               {isActive ? "Assistente Ativo e Respondendo" : "Assistente em Pausa"}
             </span>
-            {publishedVersionNumber && (
-              <span className="ml-2 text-xs text-muted-foreground">
-                · Versão {publishedVersionNumber}
-                {publishedAt && ` (publicada em ${new Date(publishedAt).toLocaleDateString("pt-BR")})`}
-              </span>
-            )}
           </div>
-          <Button size="sm" variant="outline" className="ml-auto" onClick={() => setStep("test")} disabled={!versionId}>
-            Testar rascunho
+          <Button size="sm" variant="outline" className="ml-auto" onClick={() => setStep("test")}>
+            Simular Conversa
           </Button>
         </div>
       )}
 
-      {/* Navegação entre passos */}
+      {/* Navegação entre seções */}
       <div className="flex gap-2 border-b pb-1 text-sm font-medium">
-        {(["config", "test", "publish"] as const).map((s, i) => (
+        {(["config", "test"] as const).map((s) => (
           <button
             key={s}
-            disabled={busy || ((s === "test" || s === "publish") && !versionId)}
+            disabled={busy || (s === "test" && !versionId)}
             onClick={() => setStep(s)}
             className={`flex items-center gap-2 rounded-t-lg px-4 py-2.5 transition-colors ${
               step === s
@@ -264,12 +258,7 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            <span className={`flex h-5 w-5 items-center justify-center rounded-full text-xs ${
-              step === s ? "bg-primary text-primary-foreground font-bold" : "bg-muted text-muted-foreground"
-            }`}>
-              {i + 1}
-            </span>
-            {s === "config" ? "Configurar" : s === "test" ? "Simular & Testar" : "Publicar"}
+            {s === "config" ? "⚙️ Configurações" : "💬 Simular Atendimento"}
           </button>
         ))}
       </div>
@@ -646,10 +635,10 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
 
           <div className="flex flex-wrap items-center gap-3 pt-2">
             <Button size="lg" onClick={saveAndPublishDirectly} disabled={busy}>
-              {busy ? "Salvando e ativando…" : "Salvar e Ativar Alterações"}
+              {busy ? "Salvando alterações…" : "Salvar Alterações"}
             </Button>
-            <Button size="lg" variant="outline" onClick={saveDraft} disabled={busy}>
-              {busy ? "Salvando…" : "Testar conversa antes de ativar →"}
+            <Button size="lg" variant="outline" onClick={() => setStep("test")} disabled={busy}>
+              Simular Conversa
             </Button>
           </div>
         </div>
@@ -657,7 +646,7 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
 
       {step === "test" && (
         <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">Simule uma conversa para ver como o assistente vai responder antes de publicar.</p>
+          <p className="text-sm text-muted-foreground">Simule uma conversa para ver como o assistente vai responder.</p>
           <label className="grid gap-1.5">
             <span className="text-sm font-medium">Mensagem de teste</span>
             <Textarea value={testInput} onChange={e => setTestInput(e.target.value)} rows={3} placeholder="Digite uma mensagem como se fosse um cliente…" />
@@ -672,34 +661,11 @@ export function AssistantWizard({ agentId: initialAgentId, initialVersionId, his
             </div>
           )}
           <div className="flex gap-3 pt-2">
-            <Button variant="outline" onClick={() => setStep("config")}>← Voltar e editar</Button>
-            <Button onClick={() => setStep("publish")} disabled={!versionId}>Continuar para publicar →</Button>
+            <Button variant="outline" onClick={() => setStep("config")}>← Voltar para configurações</Button>
           </div>
         </div>
       )}
 
-      {step === "publish" && (
-        <div className="space-y-4">
-          <div className="rounded-lg border bg-green-50 p-4 text-sm space-y-2">
-            <p className="font-medium text-green-800">Pronto para publicar</p>
-            <p className="text-green-700">Ao publicar, esta versão será usada nos próximos atendimentos. Se o assistente estiver pausado, continuará pausado.</p>
-            <p className="text-green-700">As versões anteriores permanecem no histórico do agente.</p>
-          </div>
-          <div className="flex gap-3">
-            <Button onClick={publish} disabled={busy || !versionId}>{busy ? "Publicando…" : "Publicar assistente"}</Button>
-            <Button variant="outline" onClick={() => setStep("test")}>← Voltar para teste</Button>
-          </div>
-        </div>
-      )}
-
-      {history.length > 0 && <section className="rounded-lg border p-4 space-y-3">
-        <h2 className="font-semibold">Histórico de configurações</h2>
-        <p className="text-sm text-muted-foreground">Restaurar preenche o formulário. Salve e teste um novo rascunho antes de publicar.</p>
-        <ul className="flex flex-wrap gap-2">{history.map(item => <li key={item.id}><Button variant="outline" size="sm" disabled={busy}
-          onClick={() => { setConfig(item.config); setVersionId(null); setTestedVersionId(null); setStep("config"); setMessage("Configuração restaurada no formulário. Salve um novo rascunho."); }}>
-          Restaurar configuração {item.version_number}
-        </Button></li>)}</ul>
-      </section>}
       {message && (
         <p role="status" className="rounded-md border px-3 py-2 text-sm">{message}</p>
       )}

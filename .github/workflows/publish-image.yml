@@ -858,13 +858,14 @@ jobs:
             cd /opt/deskcommcrm
             echo "==> 1. Atualizando repositório na VPS..."
             sudo git pull origin main
-            echo "==> 2. Puxando imagem mais recente do GHCR..."
+            echo "==> 2. Puxando imagens mais recentes do GHCR..."
             sudo docker pull ghcr.io/higuinhoo/deskcommcrm:latest
-            echo "==> 3. Recriando contêiner do app com a nova versão..."
-            sudo docker compose -f docker-compose.prod.yml up -d --force-recreate --no-deps app
+            sudo docker pull ghcr.io/higuinhoo/deskcomm-worker:latest || true
+            echo "==> 3. Recriando contêineres do app e worker com a nova versão..."
+            sudo docker compose -f docker-compose.prod.yml up -d --force-recreate --no-deps app worker
             echo "==> 4. Verificando status..."
             sleep 8
-            sudo docker ps --filter name=deskcommcrm-app-1
+            sudo docker ps --filter name=deskcommcrm-
             echo "==> Deploy concluído com sucesso!"
           EOF
 
