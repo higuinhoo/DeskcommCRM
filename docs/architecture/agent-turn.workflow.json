@@ -25,6 +25,11 @@
       "label": "Guardrails"
     },
     {
+      "id": "systemone",
+      "label": "Julgamentos estruturados (Jev)",
+      "variant": "exception"
+    },
+    {
       "id": "humano",
       "label": "Handoff Humano",
       "variant": "exception"
@@ -124,6 +129,14 @@
       "label": "Turno IA",
       "sublabel": "contexto + RAG · 2 chamadas: resposta + fechamento · kinds: inbound_turn, followup_turn, case_reply_turn",
       "tag": "runAgentTurn"
+    },
+    {
+      "id": "jev",
+      "lane": "systemone",
+      "col": 3,
+      "type": "backend",
+      "label": "Jev / System One",
+      "sublabel": "intenção · etapa · sentimento · follow-up · guardrails · juiz do flywheel; degradação segura sem LLM"
     },
     {
       "id": "toolbreaker",
@@ -306,6 +319,22 @@
     }
   ],
   "edges": [
+    {
+      "id": "turn-jev",
+      "from": "turn",
+      "to": "jev",
+      "label": "estado textual + perguntas tipadas",
+      "variant": "dashed",
+      "route": "drop"
+    },
+    {
+      "id": "jev-turn",
+      "from": "jev",
+      "to": "turn",
+      "label": "choice · score · noul + confiança",
+      "variant": "dashed",
+      "route": "drop"
+    },
     {
       "id": "inbound-ingest",
       "from": "inbound",

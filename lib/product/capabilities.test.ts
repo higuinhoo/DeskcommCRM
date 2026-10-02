@@ -21,10 +21,17 @@ const base: CapabilityContext = {
   }),
 };
 describe("capacidades de produto", () => {
-  it("preserva instalação existente com liberação desligada", () =>
-    expect(moduleDecision("sales", { ...base, product: productSchema.parse({}) }).allowed).toBe(
-      true,
-    ));
+  it("nasce enxuto, com vendas desligadas até ativação explícita", () => {
+    const product = productSchema.parse({});
+    expect(product).toMatchObject({
+      enabled: true,
+      profile: "assistant_agenda",
+      interface_mode: "simple",
+      vocabulary: "neutral",
+    });
+    expect(moduleDecision("sales", { ...base, product }).allowed).toBe(false);
+    expect(moduleDecision("calendar", { ...base, product }).allowed).toBe(true);
+  });
   it("não confunde administrador com perfil comercial", () => {
     expect(moduleDecision("sales", base).allowed).toBe(false);
     expect(moduleDecision("calendar", base).allowed).toBe(true);

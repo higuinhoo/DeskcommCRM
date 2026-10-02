@@ -62,7 +62,7 @@ const diasDeRetencao = (nome: string, padrao: number) =>
 const schema = z.object({
   PRODUCT_PROFILES_ENABLED: z
     .enum(["true", "false"])
-    .default("false")
+    .default("true")
     .transform((v) => v === "true"),
   // Node
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -201,6 +201,10 @@ const schema = z.object({
   VERCEL_AI_GATEWAY_URL: z.string().optional().default(""),
   ANTHROPIC_API_KEY: z.string().optional().default(""),
   OPENAI_API_KEY: z.string().optional().default(""),
+  // Jev/TypeSafe executa julgamentos estruturados (classificação e guardrails).
+  // Opcional no boot: sem a chave, decisões estruturadas usam defaults seguros e não chamam LLM.
+  TYPESAFE_API_KEY: z.string().optional().default(""),
+  TYPESAFE_MODEL: z.string().optional().default("jev-1.13.0"),
   // Transcrição de áudio num serviço COMPATÍVEL com o da OpenAI (Groq, um
   // Whisper próprio): a chave vale só para `/audio/transcriptions` — a conversa
   // com o cliente e a leitura de imagem continuam no provedor do ponto.

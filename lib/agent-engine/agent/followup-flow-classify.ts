@@ -9,14 +9,16 @@
  * (lib/followup/turn-bridge.ts, via callback injetado em followup-turn.ts) —
  * este módulo só classifica/propõe, nunca escreve no enrollment.
  */
+import { choice, score } from '@typesafe-ai/sdk';
 import type pg from 'pg';
 
 import type { Logger } from '../obs/logger';
 import type { ProviderRegistry } from '../edge/llm/providers';
-import { runModelCall, type LlmEdgeConfig } from '../edge/llm/run-model-call';
+import type { LlmEdgeConfig } from '../edge/llm/run-model-call';
 import type { LeadContext } from '../edge/crm/get-lead-context';
 import { fusoDaOrganizacao } from './fuso-da-org';
 import { renderAgora } from '@/lib/tempo/agora';
+import { avaliarComJev, jevConfigurado } from '@/lib/ai/system-one/client';
 
 const CLASSIFY_INSTRUCTION =
   'Você é um classificador auxiliar de follow-up (NÃO responde ao lead). Classifique a ' +
@@ -71,26 +73,40 @@ export async function classifyFollowupReply(
 ): Promise<string> {
   if (args.candidateText === null) return 'no_reply';
 
-  const call = await runModelCall(
-    db,
-    cfg,
-    {
-      tenantId: ids.tenantId,
-      leadId: ids.leadId,
-      jobId: ids.jobId,
-      purpose: 'followup_classify',
-      ...(args.model !== undefined ? { model: args.model } : {}),
-      messages: [{ role: 'user', content: buildClassifyMessage(args.candidateText, args.classes, args.hint) }],
-    },
-    { registry: deps.registry, log: deps.log },
-  );
-  const cls = parseFollowupClassification(call.result.text, args.classes);
-  if (cls === null) {
-    throw new Error(
-      'classificador de follow-up: saída do modelo sem classe reconhecível dentre as configuradas — turno re-tentado pela fila',
-    );
+  if (!jevConfigurado()) {
+    throw new Error('classificador de follow-up: Jev não configurado — turno re-tentado pela fila');
   }
-  return cls;
+  {
+    try {
+      const criteria = Object.fromEntries(
+        args.classes.map((name) => [name, name]),
+      ) as Record<string, string>;
+      const result = await avaliarComJev(db, {
+        organizationId: ids.tenantId,
+        contactId: ids.leadId,
+        jobId: ids.jobId,
+        purpose: 'followup_classify',
+        state: args.candidateText,
+        questions: {
+          class: choice(
+            args.hint
+              ? { question: 'Qual classe configurada descreve a resposta do lead?', flow_hint: args.hint }
+              : 'Qual classe configurada descreve a resposta do lead?',
+            criteria,
+          ),
+        },
+      });
+      if (result.answers.class.confidence < 0.65) {
+        throw new Error('classificador de follow-up: baixa confiança do Jev');
+      }
+      return result.answers.class.choice;
+    } catch (err) {
+      deps.log.warn('followup-flow-classify: Jev falhou — turno será re-tentado pela fila', {
+        error_type: err instanceof Error ? err.name : 'unknown',
+      });
+      throw err;
+    }
+  }
 }
 
 const PLAN_INSTRUCTION =
@@ -215,34 +231,64 @@ export async function planFollowupTiming(
   deps: { registry?: ProviderRegistry; log: Logger; clock?: () => Date },
 ): Promise<{ propostas: PropostaDeEsperaBruta[]; modelo: string }> {
   const now = (deps.clock ?? ((): Date => new Date()))();
-  const call = await runModelCall(
-    db,
-    cfg,
-    {
-      tenantId: ids.tenantId,
-      leadId: ids.leadId,
-      jobId: ids.jobId,
-      purpose: 'followup_decide_timing',
-      ...(args.model !== undefined ? { model: args.model } : {}),
-      messages: [
-        {
-          role: 'user',
-          content: buildPlanMessage(
-            args.context,
-            now,
-            args.esperas,
-            await fusoDaOrganizacao(db, ids.tenantId, deps.log),
-          ),
-        },
-      ],
-    },
-    { registry: deps.registry, log: deps.log },
-  );
-  const propostas = parsePlanoDeEsperas(call.result.text, args.esperas.map((e) => e.node_id));
-  if (propostas.length === 0) {
-    throw new Error(
-      'planejador de tempo do follow-up: saída do modelo sem nenhuma espera reconhecível — turno re-tentado pela fila',
-    );
+  const planoConservador = (motivo: string): { propostas: PropostaDeEsperaBruta[]; modelo: string } => ({
+    propostas: args.esperas.map((espera) => ({
+      node_id: espera.node_id,
+      aguardar_ms: espera.max_ms,
+      motivo,
+    })),
+    modelo: 'deterministic:max-wait',
+  });
+  if (!jevConfigurado()) {
+    deps.log.warn('followup-flow-classify: Jev não configurado — usando espera máxima');
+    return planoConservador('espera máxima aplicada porque o planejador Jev não está configurado');
   }
-  return { propostas, modelo: call.model };
+  {
+    try {
+      const fuso = await fusoDaOrganizacao(db, ids.tenantId, deps.log);
+      const questions = Object.fromEntries(
+        args.esperas.map((espera) => [
+          `wait_${espera.node_id}`,
+          score(
+            {
+              question: 'Quanto do intervalo permitido deve ser aguardado antes deste follow-up?',
+              wait: { label: espera.label, guidance: espera.guidance ?? null },
+            },
+            [
+              'Usar o mínimo: retorno deve acontecer o quanto antes.',
+              'Usar aproximadamente um quarto do intervalo.',
+              'Usar aproximadamente a metade do intervalo.',
+              'Usar aproximadamente três quartos do intervalo.',
+              'Usar o máximo: convém dar todo o espaço permitido.',
+            ],
+          ),
+        ]),
+      );
+      const result = await avaliarComJev(db, {
+        organizationId: ids.tenantId,
+        contactId: ids.leadId,
+        jobId: ids.jobId,
+        purpose: 'followup_decide_timing',
+        state: JSON.stringify({ now: renderAgora(now, fuso), context: args.context }),
+        questions,
+      });
+      const propostas = args.esperas.map((espera) => {
+        const answer = result.answers[`wait_${espera.node_id}`];
+        const fraction = answer && answer.type === 'score' && answer.confidence >= 0.65
+          ? answer.score / 4
+          : 1;
+        return {
+          node_id: espera.node_id,
+          aguardar_ms: Math.round(espera.min_ms + (espera.max_ms - espera.min_ms) * fraction),
+          motivo: 'intervalo escolhido pelo planejador semântico Jev',
+        };
+      });
+      return { propostas, modelo: result.model };
+    } catch (err) {
+      deps.log.warn('followup-flow-classify: Jev timing falhou — usando espera máxima', {
+        error_type: err instanceof Error ? err.name : 'unknown',
+      });
+      return planoConservador('espera máxima aplicada porque o planejador Jev ficou indisponível');
+    }
+  }
 }

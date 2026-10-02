@@ -35,9 +35,9 @@
     "release:conferir": "tsx scripts/cortar-release.ts",
     "release:cortar": "tsx scripts/cortar-release.ts --escrever",
     "gov:verify": "pnpm typecheck && pnpm lint && pnpm lint:channels && pnpm lint:role-rank && pnpm test:unit",
-    "worker": "tsx --env-file=.env --env-file=.env.local workers/agent-worker/main.ts",
-    "dev:crons": "tsx --env-file=.env --env-file=.env.local scripts/dev-crons.ts",
-    "flywheel:judge": "tsx --env-file=.env --env-file=.env.local scripts/flywheel-judge-live.ts"
+    "worker": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local workers/agent-worker/main.ts",
+    "dev:crons": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/dev-crons.ts",
+    "flywheel:judge": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/flywheel-judge-live.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.16",
@@ -70,6 +70,7 @@
     "@tanstack/react-query": "^5.103.1",
     "@tanstack/react-query-devtools": "^5.103.1",
     "@tanstack/react-virtual": "^3.14.13",
+    "@typesafe-ai/sdk": "^0.6.0",
     "@upstash/redis": "^1.38.4",
     "@xyflow/react": "^12.11.6",
     "ai": "^7.0.103",

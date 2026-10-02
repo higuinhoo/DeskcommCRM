@@ -5,10 +5,12 @@
  * inegociável: propostas só viram comportamento quando o dono publica na tela.
  */
 import type pg from 'pg';
+import { choice } from '@typesafe-ai/sdk';
 
 import { runModelCall, type LlmEdgeConfig } from '../edge/llm/run-model-call';
 import type { Logger } from '../obs/logger';
 import { aggregateFollowupOutcomes, type FlowOutcomeStat } from '../../followup/outcome-stats';
+import { avaliarComJev, jevConfigurado } from '@/lib/ai/system-one/client';
 
 // Os dois pontos do flywheel NÃO fixam modelo aqui. Fixavam `claude-haiku-4-5`,
 // e um id de modelo só é válido no vocabulário do provedor que a instalação usa:
@@ -100,17 +102,21 @@ function judgePrompt(m: TraceMaterial, optionOrder: 'yes_first' | 'no_first'): s
   ].join('\n');
 }
 
-function distillerPrompt(missingFacts: string[]): string {
+function distillerPrompt(material: TraceMaterial): string {
   return [
     'Você melhora PLAYBOOKS de agentes SDR por DELTAS mínimos. Um juiz constatou falha de higiene de',
-    `memória em conversa real: fatos duráveis fora das notas do lead (${missingFacts.join('; ')}).`,
+    'memória em conversa real: existem fatos duráveis da conversa fora das notas atuais.',
     'Causa raiz típica: o agente consolida notas com "supersedes" apagando fatos de OUTRO assunto.',
     'Proponha UM único bullet de playbook, em pt-BR, imperativo, ≤3 linhas, que previna essa classe',
     'de falha sem proibir consolidação legítima. NÃO cite dados do lead.',
-    'Decida também o ESCOPO do aprendizado: "org" quando vale para TODO atendimento da organização',
-    '(política, tom de voz, fato do negócio — ex.: "a loja não vende aos domingos"); "agent" quando é',
-    'específico do comportamento deste agente.',
-    'Responda SOMENTE JSON: {"content": string, "scope": "agent" | "org"}',
+    '',
+    'TRANSCRIPT:', material.transcript,
+    '',
+    'RESUMO:', material.rollingSummary,
+    '',
+    'NOTAS ATUAIS:', material.notesNow,
+    '',
+    'Responda SOMENTE com o texto do bullet, sem JSON nem explicação.',
   ].join('\n');
 }
 
@@ -145,24 +151,50 @@ export async function runFlywheelOnce(
   let judged = 0;
   let proposals = 0;
 
+  if (!jevConfigurado()) {
+    log.warn('flywheel: Jev não configurado — rodada de julgamento ignorada');
+    return { runId, judged, proposals, followupOutcomes: [] };
+  }
+
   for (const turn of turns) {
     const material = await buildMaterial(pool, turn);
     const optionOrder = parseInt(turn.job_id.slice(0, 8), 16) % 2 === 0 ? 'yes_first' : 'no_first';
+    const verdictCriteria = optionOrder === 'yes_first'
+      ? {
+          yes: 'Todos os fatos duráveis revelados estão preservados nas notas.',
+          no: 'Existe fato durável no transcript ou resumo que não está preservado nas notas.',
+          unknown: 'O material não permite decidir com segurança.',
+        }
+      : {
+          no: 'Existe fato durável no transcript ou resumo que não está preservado nas notas.',
+          yes: 'Todos os fatos duráveis revelados estão preservados nas notas.',
+          unknown: 'O material não permite decidir com segurança.',
+        };
 
-    const judgedCall = await runModelCall(
-      pool,
-      llmCfg,
-      {
-        tenantId: turn.organization_id,
-        leadId: turn.contact_id,
-        jobId: turn.job_id,
-        purpose: 'flywheel_judge',
-        messages: [{ role: 'user', content: judgePrompt(material, optionOrder) }],
+    const judgedCall = await avaliarComJev(pool, {
+      organizationId: turn.organization_id,
+      contactId: turn.contact_id,
+      jobId: turn.job_id,
+      purpose: 'flywheel_judge',
+      state: {
+        transcript: material.transcript,
+        notesNow: material.notesNow,
+        rollingSummary: material.rollingSummary,
       },
-      { log },
-    );
-    const verdict = parseJson<{ verdict: string; missing_facts?: string[] }>(judgedCall.result.text);
-    const verdictValue = ['yes', 'no', 'unknown'].includes(verdict.verdict) ? verdict.verdict : 'unknown';
+      questions: {
+        verdict: choice(
+          'Os fatos duráveis de `transcript` e `rollingSummary` estão preservados em `notesNow`?',
+          verdictCriteria,
+        ),
+        scope: choice('Qual é o escopo provável do aprendizado se houver falha de memória?', {
+          agent: 'Regra sobre o comportamento específico deste agente.',
+          org: 'Política ou fato do negócio que vale para toda a organização.',
+        }),
+      },
+    });
+    const verdictValue = judgedCall.answers.verdict.confidence >= 0.7
+      ? judgedCall.answers.verdict.choice
+      : 'unknown';
 
     const { rowCount } = await pool.query(
       `insert into flywheel_judge_verdicts
@@ -176,7 +208,7 @@ export async function runFlywheelOnce(
         DIMENSION,
         verdictValue,
         optionOrder,
-        judgedCall.provider,
+        'typesafe',
         judgedCall.model,
         JSON.stringify({ source: 'live_turn', job_id: turn.job_id, contact_id: turn.contact_id }),
         runId,
@@ -195,12 +227,12 @@ export async function runFlywheelOnce(
           leadId: turn.contact_id,
           jobId: turn.job_id,
           purpose: 'flywheel_distiller',
-          messages: [{ role: 'user', content: distillerPrompt(verdict.missing_facts ?? []) }],
+          messages: [{ role: 'user', content: distillerPrompt(material) }],
         },
         { log },
       );
-      const proposal = parseJson<{ content: string; scope?: string }>(distilled.result.text);
-      const isOrg = proposal.scope?.toLowerCase().trim() === 'org';
+      const content = distilled.result.text.trim();
+      const isOrg = judgedCall.answers.scope.choice === 'org';
       await pool.query(
         `insert into flywheel_distiller_proposals
            (organization_id, run_id, dataset, type, target, content, evidence)
@@ -211,7 +243,7 @@ export async function runFlywheelOnce(
           DATASET,
           isOrg ? 'org_memory_entry' : 'playbook_bullet',
           isOrg ? 'org' : 'tenant',
-          proposal.content,
+          content,
           JSON.stringify({ trace_ids: [turn.job_id], dimension: DIMENSION, verdict_run_id: runId }),
         ],
       );

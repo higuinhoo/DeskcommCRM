@@ -40,6 +40,8 @@ const envMock: Record<string, string> = {
   AI_GATEWAY_API_KEY: "",
   OPENROUTER_API_KEY: "",
   OPENAI_API_KEY: "",
+  TYPESAFE_API_KEY: "test-key",
+  TYPESAFE_MODEL: "jev-1.13.0",
 };
 vi.mock("@/lib/env", () => ({
   get env() {
@@ -47,17 +49,15 @@ vi.mock("@/lib/env", () => ({
   },
 }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: vi.fn() }));
-vi.mock("@/lib/ai/log-invocation", () => ({ logInvocation: vi.fn() }));
-vi.mock("@/lib/ai/cost", () => ({ computeCost: vi.fn(async () => 1) }));
-vi.mock("@/lib/ai/gateway-binding", () => ({ resolverModeloDoPonto: vi.fn() }));
-vi.mock("ai", () => ({ generateObject: vi.fn() }));
-
-import { generateObject } from "ai";
+const avaliarComJev = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/ai/system-one/client", () => ({
+  jevConfigurado: () => true,
+  avaliarComJev,
+}));
+vi.mock("@/lib/agent-engine/db/request-pool", () => ({ getRequestPool: () => ({}) }));
 
 import { processSentiment } from "@/workers/ai-sentiment-worker";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { logInvocation } from "@/lib/ai/log-invocation";
-import { resolverModeloDoPonto } from "@/lib/ai/gateway-binding";
 import type { EventRow } from "@/lib/event-log/dispatcher";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -268,26 +268,23 @@ async function rodar(c: Cenario): Promise<{
 
   const alertas = rpcs.filter((r) => r["p_event_type"] === "ai.sentiment_alert");
   const meta = alertas[0]?.["p_metadata"] as { threshold?: number } | undefined;
-  const chamadasDeLog = vi.mocked(logInvocation).mock.calls;
-  const ultima = chamadasDeLog[chamadasDeLog.length - 1]?.[0];
+  const chamadasJev = avaliarComJev.mock.calls;
+  const ultima = chamadasJev[chamadasJev.length - 1]?.[1] as { agentId?: string | null } | undefined;
 
   return {
     alertas,
     limiarDoAlerta: meta?.threshold ?? null,
-    agenteDoCusto: ultima?.agent_id ?? null,
+    agenteDoCusto: ultima?.agentId ?? null,
   };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(resolverModeloDoPonto).mockResolvedValue({
-    model: "modelo-dublê",
-    modelId: "anthropic/claude-haiku-4-5",
-  } as unknown as Awaited<ReturnType<typeof resolverModeloDoPonto>>);
-  vi.mocked(generateObject).mockResolvedValue({
-    object: { sentiment_score: NOTA, reasoning_short: "cliente reclamando de recorrência" },
-    usage: { inputTokens: 10, outputTokens: 5 },
-  } as unknown as Awaited<ReturnType<typeof generateObject>>);
+  avaliarComJev.mockResolvedValue({
+    model: "jev-1.13.0",
+    answers: { sentiment: { type: "score", score: NOTA * 4, confidence: 0.9 } },
+    usage: { input_tokens: 10, output_tokens: 5 },
+  });
 });
 
 describe("limiar de sentimento — o agente da conversa é quem manda (#486)", () => {

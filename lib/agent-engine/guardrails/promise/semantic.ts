@@ -17,12 +17,14 @@
  *
  * organization_id/contact_id vêm da ROW do job (closure do run), nunca do payload (regra dura 1).
  */
+import { noul } from '@typesafe-ai/sdk';
 import type pg from 'pg';
 
 import type { Logger } from '../../obs/logger';
 import type { ProviderRegistry } from '../../edge/llm/providers';
-import { runModelCall, type LlmEdgeConfig } from '../../edge/llm/run-model-call';
+import type { LlmEdgeConfig } from '../../edge/llm/run-model-call';
 import type { LlmResolveOverride } from '../../edge/llm/credentials';
+import { avaliarComJev, jevConfigurado } from '@/lib/ai/system-one/client';
 
 /** Veredito binário do classificador. suspectPhrase = null quando isPromise = false. */
 export interface PromiseClassification {
@@ -103,21 +105,37 @@ export async function classifyPromise(
   args: { candidate: string; model?: string; llmOverride?: LlmResolveOverride },
   deps: { registry?: ProviderRegistry; log: Logger },
 ): Promise<PromiseClassification> {
-  const call = await runModelCall(
-    db,
-    cfg,
-    {
-      tenantId: ids.tenantId,
-      ...(ids.leadId != null ? { leadId: ids.leadId } : {}),
-      ...(ids.jobId !== undefined ? { jobId: ids.jobId } : {}),
-      purpose: 'promise_semantic',
-      ...(args.model !== undefined ? { model: args.model } : {}),
-      ...(args.llmOverride !== undefined ? { llmOverride: args.llmOverride } : {}),
-      messages: [{ role: 'user', content: buildPromiseMessage(args.candidate) }],
-    },
-    { registry: deps.registry, log: deps.log },
-  );
-  return parsePromiseClassification(call.result.text, deps.log);
+  if (!jevConfigurado()) {
+    deps.log.warn('promise-semantic: Jev não configurado — promessa bloqueada preventivamente');
+    return { isPromise: true, suspectPhrase: null };
+  }
+  {
+    try {
+      const result = await avaliarComJev(db, {
+        organizationId: ids.tenantId,
+        contactId: ids.leadId ?? null,
+        jobId: ids.jobId ?? null,
+        purpose: 'promise_semantic',
+        state: args.candidate,
+        questions: {
+          is_promise: noul(
+            'A mensagem assume uma promessa ou compromisso concreto não coberto por preço, desconto ou parcelas numéricas?',
+            {
+              true: 'Oferece gratuidade, cortesia, brinde, isenção, devolução garantida, prazo concreto ou compromisso pessoal de resolução.',
+              false: 'É pergunta, saudação, descrição, próximo passo vago ou slogan genérico sem compromisso concreto.',
+            },
+          ),
+        },
+      });
+      const probability = result.answers.is_promise.noul;
+      return { isPromise: probability >= 0.7, suspectPhrase: null };
+    } catch (err) {
+      deps.log.warn('promise-semantic: Jev falhou — promessa bloqueada preventivamente', {
+        error_type: err instanceof Error ? err.name : 'unknown',
+      });
+      return { isPromise: true, suspectPhrase: null };
+    }
+  }
 }
 
 /**

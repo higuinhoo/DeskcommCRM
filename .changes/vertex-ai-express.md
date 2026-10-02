@@ -1,6 +1,6 @@
 ---
-impacto: nova_funcionalidade
-secao: novo
+impacto: capacidade_nova
+secao: adicionado
 titulo: O CRM agora conecta ao Google Cloud Vertex AI por API key
 ---
 
