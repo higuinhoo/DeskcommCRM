@@ -12,11 +12,13 @@
  * try/catch: qualquer erro (falha do modelo, LlmModelNotEnabledError, timeout)
  * vira log.warn + null — o chamador cai no fallbackAgentId do router.
  */
+import { choice } from '@typesafe-ai/sdk';
 import type pg from 'pg';
 
 import type { Logger } from '../obs/logger';
-import { runModelCall, type LlmEdgeConfig } from '../edge/llm/run-model-call';
+import type { runModelCall, LlmEdgeConfig } from '../edge/llm/run-model-call';
 import type { LoadedRouter, RouterMember } from './router-config';
+import { avaliarComJev, jevConfigurado } from '@/lib/ai/system-one/client';
 
 export interface IntentVerdict {
   intentName: string | null;
@@ -101,33 +103,39 @@ export async function classifyIntent(
   },
   deps: ClassifyIntentDeps,
 ): Promise<IntentVerdict | null> {
-  const call = deps.runModelCall ?? runModelCall;
-  try {
-    const { result } = await call(
-      db,
-      llmCfg,
-      {
-        tenantId: input.tenantId,
-        leadId: input.leadId,
+  if (!jevConfigurado()) {
+    deps.log.warn('intent-classifier: Jev não configurado — turno cai no fallback do roteador');
+    return null;
+  }
+  {
+    try {
+      const criteria: Record<string, string> = Object.fromEntries([
+        ...input.router.members.map((member) => [
+          member.intentName,
+          [member.intentDescription, ...member.examples.map((example) => `Exemplo: ${example}`)].join(' '),
+        ]),
+        ['none', 'Nenhuma intenção configurada se aplica à mensagem.'],
+      ]);
+      const result = await avaliarComJev(db, {
+        organizationId: input.tenantId,
+        contactId: input.leadId,
         jobId: input.jobId,
         purpose: 'intent_router',
-        model: input.router.classifierModel,
-        // Sem isto, o modelo do roteador viaja para o provedor da ORG: escolher
-        // um modelo OpenAI numa org configurada como Anthropic mandava o id para
-        // o lugar errado, e a classificação falhava sempre.
-        ...(input.router.classifierProvider
-          ? { llmOverride: { provider: input.router.classifierProvider } }
-          : {}),
-        messages: [{ role: 'user', content: buildClassifierPrompt(input.router.members, input.signal) }],
-      },
-      { log: deps.log },
-    );
-    return parseIntentVerdict(result.text, input.router.members);
-  } catch (err) {
-    // Falha do classificador NUNCA derruba o turno — chamador cai no fallback do router.
-    deps.log.warn('intent-classifier: falha ao classificar intenção — turno cai no fallback', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
+        state: input.signal,
+        questions: {
+          intent: choice('Qual intenção configurada descreve melhor a mensagem recebida?', criteria),
+        },
+      });
+      const answer = result.answers.intent;
+      return {
+        intentName: answer.choice === 'none' ? null : answer.choice,
+        confidence: answer.confidence,
+      };
+    } catch (err) {
+      deps.log.warn('intent-classifier: Jev falhou — turno cai no fallback do roteador', {
+        error_type: err instanceof Error ? err.name : 'unknown',
+      });
+      return null;
+    }
   }
 }

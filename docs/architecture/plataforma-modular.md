@@ -2,8 +2,11 @@
 
 Confirmado no código: `organizations.settings.product_platform` é a política persistente.
 O resolvedor `lib/product/capabilities.ts` alimenta a navegação, o proxy e os guards de API.
-`PRODUCT_PROFILES_ENABLED` mantém compatibilidade por padrão. A ativação depende de concluir
-cobertura de workers, ações e MCP; não ativar por causa de um build verde.
+`PRODUCT_PROFILES_ENABLED` nasce ligado. Sem configuração explícita, a organização usa o perfil
+`assistant_agenda`, interface simples e vocabulário neutro: atendimento, assistente, conhecimento
+e agenda ficam disponíveis; vendas, relatórios, automações e integrações ficam preservados, mas
+desativados até escolha explícita. Definir a variável como `false` restaura temporariamente a
+experiência completa legada.
 
 A simulação em `platform_support_sessions.preview_context` passa pelo mesmo resolvedor,
 por interseção com a política real. Não eleva papel nem concede módulo. A migration 0314
@@ -31,6 +34,7 @@ O painel de saúde também verifica Google Agenda, credenciais de IA, banco, fil
 storage; o teste manual apenas relê sinais seguros e não altera a operação.
 
 Living System Checklist:
+
 1. Entrada: política persistente, sessão autenticada, versões existentes e telemetria real.
 2. Saída: navegação/guards, runtime publicado e diagnóstico do operador.
 3. Registro: mudanças de produto, preview e versões no audit existente.
@@ -41,8 +45,9 @@ Living System Checklist:
 8. Continuidade: modo assisted e handoff existentes; nenhum segundo motor.
 9. Retorno: simular, revisar configuração, salvar nova versão e testar antes de publicar.
 10. Mapa: este documento liga política → resolvedor → guards/interface; config → versão → runtime;
-telemetria → diagnóstico → correção administrativa.
+    telemetria → diagnóstico → correção administrativa.
 
 Pendências: laboratório sintético, cobertura completa de vocabulário,
-provisionamento guiado sem editor técnico, enforcement de módulos em workers/MCP,
-testes completos de integração/tela e implantação. Nenhuma destas partes é declarada concluída.
+provisionamento guiado sem editor técnico, enforcement de módulos nos workers não conversacionais,
+testes completos de integração/tela e implantação. O turno conversacional já remove classificação
+de funil e ferramentas comerciais quando vendas estão desativadas.

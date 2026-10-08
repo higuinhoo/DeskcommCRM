@@ -24,14 +24,16 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { choice } from '@typesafe-ai/sdk';
 import type pg from 'pg';
 
 import type { Logger } from '../obs/logger';
 import type { ProviderRegistry } from '../edge/llm/providers';
-import { runModelCall, type LlmEdgeConfig } from '../edge/llm/run-model-call';
+import type { LlmEdgeConfig } from '../edge/llm/run-model-call';
 import type { LlmResolveOverride } from '../edge/llm/credentials';
 import type { LeadContext } from '../edge/crm/get-lead-context';
 import { LEAD_STAGES, type LeadStage } from './lead-state';
+import { avaliarComJev, jevConfigurado } from '@/lib/ai/system-one/client';
 
 /** Knobs do classificador (env STAGE_CLASSIFIER_*; defaults conservadores no .env.example). */
 export interface StageClassifierKnobs {
@@ -101,30 +103,46 @@ export async function classifyStage(
   },
   deps: { registry?: ProviderRegistry; log: Logger },
 ): Promise<LeadStage | null> {
-  const call = await runModelCall(
-    db,
-    cfg,
-    {
-      tenantId: ids.tenantId,
-      leadId: ids.leadId,
-      ...(ids.jobId !== undefined ? { jobId: ids.jobId } : {}),
-      purpose: 'stage_classifier',
-      ...(args.model !== undefined ? { model: args.model } : {}),
-      ...(args.llmOverride !== undefined ? { llmOverride: args.llmOverride } : {}),
-      messages: [
-        { role: 'user', content: buildClassifierMessage(args.context, args.currentStage) },
-      ],
-    },
-    { registry: deps.registry, log: deps.log },
-  );
-  const suggestion = parseStageSuggestion(call.result.text);
-  if (suggestion === null) {
-    // aux batch sem estágio reconhecível NÃO é incidente do turno: sem PII, só o aviso.
-    deps.log.warn(
-      'stage-classifier: saída do modelo auxiliar sem estágio reconhecível — turno segue sem hint',
-    );
+  if (!jevConfigurado()) {
+    deps.log.warn('stage-classifier: Jev não configurado — estágio permanece inalterado');
+    return null;
   }
-  return suggestion;
+  {
+    try {
+      const criteria = {
+        new: 'Lead recém-chegado, sem diálogo real nem necessidade concreta.',
+        contacted: 'Já houve troca inicial, mas nenhuma necessidade concreta foi revelada.',
+        qualifying: 'Necessidade, contexto ou dor estão sendo descobertos.',
+        qualified: 'Orçamento, autoridade, necessidade e prazo já foram confirmados.',
+        negotiating: 'Há proposta, preço ou condições em discussão.',
+        won: 'O lead aceitou ou fechou explicitamente.',
+        lost: 'O lead recusou, desistiu ou pediu para não ser contatado.',
+        none: 'Não há evidência suficiente para sugerir mudança ou estágio.',
+      } as const;
+      const result = await avaliarComJev(db, {
+        organizationId: ids.tenantId,
+        contactId: ids.leadId,
+        jobId: ids.jobId ?? null,
+        purpose: 'stage_classifier',
+        state: JSON.stringify({ current_stage: args.currentStage, conversation: args.context }),
+        questions: {
+          stage: choice(
+            'Em qual estágio do funil esta conversa está agora? Escolha none quando não houver evidência suficiente.',
+            criteria,
+          ),
+        },
+      });
+      const answer = result.answers.stage;
+      if (answer.confidence < 0.65) return null;
+      const stage = answer.choice;
+      return stage === 'none' ? null : stage;
+    } catch (err) {
+      deps.log.warn('stage-classifier: Jev falhou — estágio permanece inalterado', {
+        error_type: err instanceof Error ? err.name : 'unknown',
+      });
+      return null;
+    }
+  }
 }
 
 /**

@@ -1256,6 +1256,7 @@ FIELDS=(
   "SUPABASE_ACCESS_TOKEN|Token de acesso do Supabase — configura os links de e-mail (supabase.com/dashboard/account/tokens). NÃO fica salvo. Enter pula|||secret|opcional"
   "$CAMPO_IA"
   ${CAMPO_OPENAI_EXTRA:+"$CAMPO_OPENAI_EXTRA"}
+  "TYPESAFE_API_KEY|Chave opcional do Jev/TypeSafe — reduz custo e latência de classificações (console.typesafe.ai)|||secret|opcional"
   "OWNER_EMAIL|E-mail do primeiro admin (dono)||v_email||"
   "OWNER_PASSWORD|Senha do primeiro admin (mínimo 8 caracteres)||v_password|secret|"
   "APP_NAME|Nome que aparece na interface (Enter para o padrão)|DeskcommCRM|||"
@@ -1672,6 +1673,10 @@ esac
   printf '# OpenAI: transcrição dos áudios do WhatsApp (Whisper) + embeddings do RAG.\n'
   printf '# Opcional — sem ela a IA responde sem a base e pede o áudio em texto.\n'
   envq OPENAI_API_KEY "${OPENAI_API_KEY:-}"
+  printf '# Jev/TypeSafe: julgamentos estruturados rápidos (classificação e guardrails).\n'
+  printf '# Opcional no boot — vazio usa defaults seguros e não chama LLM nesses pontos.\n'
+  envq TYPESAFE_API_KEY "${TYPESAFE_API_KEY:-}"
+  envq TYPESAFE_MODEL "${TYPESAFE_MODEL:-jev-1.13.0}"
   printf '# Web Push: aviso na bandeja do sistema com a aba do CRM fechada.\n'
   printf '# Opcional e VAZIO por padrão — sem o par, os avisos aparecem só com o\n'
   printf '# site aberto, que é exatamente o que acontecia antes. Para ligar:\n'

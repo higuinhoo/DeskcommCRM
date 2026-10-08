@@ -13,48 +13,17 @@
  * - `console.log` is forbidden — only `console.warn`/`console.error` with prefix.
  */
 
-import { generateObject } from "ai";
-import { z } from "zod";
+import { score } from "@typesafe-ai/sdk";
 
 import { resolverAgenteDaConversa } from "@/lib/ai/agents/agente-da-conversa";
-import { computeCost } from "@/lib/ai/cost";
 import { decidirElegibilidadeDaConversaViaSupabase } from "@/lib/ai/elegibilidade/consulta-supabase";
 import { ttlDaAutorizacaoMs } from "@/lib/ai/elegibilidade/gate";
-import { DEFAULT_CLASSIFIER_MODEL, isAiGatewayConfigured } from "@/lib/ai/gateway";
-import { resolverModeloDoPonto } from "@/lib/ai/gateway-binding";
-import { logInvocation } from "@/lib/ai/log-invocation";
-import { SENTIMENT_SYSTEM_PROMPT } from "@/lib/ai/prompts/sentiment";
 import type { EventRow } from "@/lib/event-log/dispatcher";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getRequestPool } from "@/lib/agent-engine/db/request-pool";
+import { avaliarComJev, jevConfigurado } from "@/lib/ai/system-one/client";
 
-const SENTIMENT_MODEL = DEFAULT_CLASSIFIER_MODEL; // "anthropic/claude-haiku-4-5"
 const DEFAULT_SENTIMENT_THRESHOLD = 0.3;
-const CLASSIFY_TIMEOUT_MS = 5_000;
-
-// As descrições NÃO são decoração: viram o JSON Schema da ferramenta que o
-// provider manda ao modelo. Sem elas o `.max(100)` existia só no validador — o
-// modelo nunca ficava sabendo do limite e escrevia 223, 297, 340 caracteres
-// (medido com mensagens reais desta instalação). Com a descrição, o mesmo
-// conjunto caiu para 59–102.
-//
-// O teto do Zod é FOLGADO de propósito. Modelo não conta caractere: mesmo
-// avisado, uma amostra bateu 102. Reprovar a classificação inteira por 2
-// caracteres a mais seria péssimo negócio — ainda mais porque
-// `reasoning_short` é DESCARTADO (só `sentiment_score` e a latência vão para
-// messages.metadata). Ele existe para o modelo raciocinar antes de pontuar,
-// não para ser guardado. A descrição segura a verbosidade (e o custo); o teto
-// só impede resposta absurda.
-const sentimentSchema = z.object({
-  sentiment_score: z
-    .number()
-    .min(0)
-    .max(1)
-    .describe("0 = muito negativo, 0.5 = neutro, 1 = muito positivo"),
-  reasoning_short: z
-    .string()
-    .max(280)
-    .describe("Justificativa curta da nota, em NO MÁXIMO 100 caracteres"),
-});
 
 export interface SentimentResult {
   skipped: boolean;
@@ -64,29 +33,9 @@ export interface SentimentResult {
 
 export async function processSentiment(event: EventRow): Promise<SentimentResult> {
   try {
-    // ── Guard: AI Gateway configured ────────────────────────────────────────
-    if (!isAiGatewayConfigured()) {
-      return { skipped: true, reason: "ai_gateway_key_missing" };
+    if (!jevConfigurado()) {
+      return { skipped: true, reason: "typesafe_key_missing" };
     }
-
-    // Passar SENTIMENT_MODEL como string cai no gateway da Vercel mesmo sem
-    // chave (plano anônimo) e devolve "Unauthenticated ... Configure
-    // AI_GATEWAY_API_KEY" — o que quebrava este worker em toda instalação que
-    // só tem ANTHROPIC_API_KEY, ou seja, o padrão do install.sh. O resolver
-    // devolve o provider certo para a chave que existir.
-    // O painel de provedores manda AQUI também. Sem esta linha, a tela
-    // oferecia "Medir o clima da conversa", aceitava a escolha e dizia
-    // "salvo" — e este worker seguia usando o modelo padrão. Botão que não
-    // controla nada é pior que botão ausente: gasta a confiança de quem clicou.
-    const resolvido = await resolverModeloDoPonto(
-      "sentiment_classify",
-      event.organization_id,
-      SENTIMENT_MODEL,
-    );
-    if (!resolvido) {
-      return { skipped: true, reason: "ai_gateway_key_missing" };
-    }
-    const sentimentModel = resolvido.model;
 
     const messageId =
       (event.payload?.["message_id"] as string | undefined) ?? event.entity_id ?? null;
@@ -203,74 +152,30 @@ export async function processSentiment(event: EventRow): Promise<SentimentResult
         ? agentConfig["sentiment_threshold"]
         : DEFAULT_SENTIMENT_THRESHOLD;
 
-    // ── Call LLM ──────────────────────────────────────────────────────────
-    const abortController = new AbortController();
-    const timeout = setTimeout(() => abortController.abort(), CLASSIFY_TIMEOUT_MS);
-
+    // ── Julgamento estruturado (Jev) ──────────────────────────────────────
     const start = Date.now();
-    let result: z.infer<typeof sentimentSchema>;
-    let promptTokens = 0;
-    let completionTokens = 0;
-
-    try {
-      const generated = await generateObject({
-        model: sentimentModel,
-        schema: sentimentSchema,
-        system: SENTIMENT_SYSTEM_PROMPT,
-        prompt: body,
-        temperature: 0,
-        // 80 era pequeno demais e nunca tinha sido exercitado (o worker morria
-        // antes, na autenticação). `generateObject` com Anthropic usa modo
-        // FERRAMENTA: o JSON vai dentro de um tool_use, que custa bem mais que
-        // texto puro. Medido com mensagens reais desta instalação: 2 de 3
-        // paravam em `stop_reason: max_tokens` com o JSON cortado no meio —
-        // daí o "No object generated: response did not match schema", que
-        // parecia erro de esquema e era truncamento. Pico observado: 146 sem
-        // as descrições, 84 com elas. 256 dá folga sem virar cheque em branco.
-        maxOutputTokens: 256,
-        abortSignal: abortController.signal,
-      });
-
-      result = generated.object;
-
-      const usage = generated.usage as
-        | {
-            inputTokens?: number;
-            outputTokens?: number;
-            promptTokens?: number;
-            completionTokens?: number;
-          }
-        | undefined;
-      promptTokens = usage?.inputTokens ?? usage?.promptTokens ?? 0;
-      completionTokens = usage?.outputTokens ?? usage?.completionTokens ?? 0;
-    } catch (err) {
-      // A FALHA também vira linha em `llm_calls`. A 0128 fez isso para o seam do
-      // agent-engine, e este worker não passa por lá — então, até aqui, escolher
-      // no painel um modelo que não existe fazia toda classificação falhar sem
-      // deixar rastro nenhum: a tela de Execuções, cuja razão de existir é
-      // responder "por que falhou", não mostrava nada para este ponto, com o
-      // painel dizendo que estava configurado.
-      //
-      // O `throw` mantém o desfecho de antes — quem decide o retorno continua
-      // sendo o catch global, que nunca deixa este worker derrubar o bot.
-      logInvocation({
-        organization_id: event.organization_id,
-        agent_id: agent?.id ?? null,
-        conversation_id: conversationId ?? message.conversation_id ?? null,
-        message_id: messageId,
-        invocation_kind: "sentiment_classify",
-        model: resolvido.modelId,
-        prompt_tokens: promptTokens,
-        completion_tokens: completionTokens,
-        latency_ms: Date.now() - start,
-        cost_cents: 0,
-        finish_reason: "error",
-        error_payload: { message: err instanceof Error ? err.message : String(err) },
-      });
-      throw err;
-    } finally {
-      clearTimeout(timeout);
+    const judged = await avaliarComJev(getRequestPool(), {
+          organizationId: event.organization_id,
+          agentId: agent?.id ?? null,
+          purpose: "sentiment_classify",
+          state: body,
+          questions: {
+            sentiment: score(
+              "Qual é o sentimento expresso pelo cliente nesta mensagem?",
+              [
+                "Muito negativo: irritação, hostilidade ou frustração intensa.",
+                "Negativo: insatisfação ou preocupação clara.",
+                "Neutro: sem emoção positiva ou negativa dominante.",
+                "Positivo: satisfação, interesse ou cordialidade.",
+                "Muito positivo: entusiasmo, gratidão ou forte satisfação.",
+              ],
+            ),
+          },
+        });
+    if (judged.answers.sentiment.confidence < 0.6) {
+      return { skipped: true, reason: "typesafe_low_confidence" };
     }
+    const result = { sentiment_score: judged.answers.sentiment.score / 4 };
 
     const latencyMs = Date.now() - start;
 
@@ -294,29 +199,6 @@ export async function processSentiment(event: EventRow): Promise<SentimentResult
         error: updateErr.message,
       });
     }
-
-    // ── Log invocation (fire-and-forget) ──────────────────────────────────
-    logInvocation({
-      organization_id: event.organization_id,
-      // `null`, não `""` (issue #160): o worker roda mesmo sem agente ativo — lê
-      // o agente só para o threshold e cai no default —, e string vazia numa
-      // coluna uuid fazia o insert de auditoria falhar em silêncio. O custo
-      // existe; a linha precisa entrar.
-      agent_id: agent?.id ?? null,
-      conversation_id: conversationId ?? message.conversation_id ?? null,
-      message_id: messageId,
-      invocation_kind: "sentiment_classify",
-      model: resolvido.modelId,
-      prompt_tokens: promptTokens,
-      completion_tokens: completionTokens,
-      latency_ms: latencyMs,
-      cost_cents: await computeCost({
-        model: resolvido.modelId,
-        promptTokens,
-        completionTokens,
-      }),
-      finish_reason: null,
-    });
 
     // ── Emit alert if below threshold ────────────────────────────────────
     if (result.sentiment_score < threshold) {

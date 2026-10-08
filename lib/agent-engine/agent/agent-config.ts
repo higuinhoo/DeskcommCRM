@@ -13,12 +13,14 @@
  *   - sem agente publicado para a sessão ⇒ null (o turno cai no comportamento
  *     de fallback: playbook por ponteiro + settings.llm da org + knobs de env).
  */
-import type pg from 'pg';
+import type pg from "pg";
 
-import { lerJanelaDeAtendimento, type JanelaDeAtendimento } from './janela-de-atendimento';
+import { lerJanelaDeAtendimento, type JanelaDeAtendimento } from "./janela-de-atendimento";
+import { moduleDecision } from "@/lib/product/capabilities";
+import { readProductPolicy } from "@/lib/product/policy";
 
 export interface PublishedAgentConfig {
-  operationMode?: 'automatic' | 'assisted';
+  operationMode?: "automatic" | "assisted";
   pausedAt?: string | null;
   operationRevision?: string;
   agentId: string;
@@ -78,6 +80,8 @@ export interface PublishedAgentConfig {
    * Lido pelo gate em `lib/leads/escopo-de-funil.ts`.
    */
   pipelineIds: string[];
+  /** Perfil enxuto remove do turno classificadores e tools comerciais. */
+  salesEnabled?: boolean;
   /**
    * Horário de funcionamento declarado na tela (`trigger_config.filters.business_hours`).
    * `null` = atende a qualquer hora. Quem obedece é o turno inbound, adiando o
@@ -91,7 +95,7 @@ export interface PublishedAgentConfig {
 }
 
 interface Row {
-  operation_mode: 'automatic' | 'assisted';
+  operation_mode: "automatic" | "assisted";
   paused_at: string | null;
   operation_revision: string;
   agent_id: string;
@@ -121,6 +125,7 @@ interface Row {
   trigger_config: unknown;
   version_created_by: string | null;
   agent_created_by: string | null;
+  organization_settings: unknown;
 }
 
 const SELECT_AGENT_CONFIG_COLUMNS = `a.operation_mode,a.paused_at,a.operation_revision::text,a.id as agent_id,
@@ -149,21 +154,22 @@ const SELECT_AGENT_CONFIG_COLUMNS = `a.operation_mode,a.paused_at,a.operation_re
             v.knowledge_source_ids,
             v.trigger_config,
             v.created_by as version_created_by,
-            a.created_by as agent_created_by`;
+            a.created_by as agent_created_by,
+            o.settings as organization_settings`;
 
 /** Mapeamento Row (snake_case do banco) → PublishedAgentConfig, compartilhado
  * pelas duas variantes de loader (por channel_session e por agent id). */
 function mapAgentConfigRow(r: Row): PublishedAgentConfig {
   const cfg = (r.config ?? {}) as { rag_top_k?: unknown; rag_similarity_threshold?: unknown };
   const ragTopK =
-    typeof cfg.rag_top_k === 'number' &&
+    typeof cfg.rag_top_k === "number" &&
     Number.isInteger(cfg.rag_top_k) &&
     cfg.rag_top_k >= 1 &&
     cfg.rag_top_k <= 20
       ? cfg.rag_top_k
       : 5;
   const ragSimilarityThreshold =
-    typeof cfg.rag_similarity_threshold === 'number' &&
+    typeof cfg.rag_similarity_threshold === "number" &&
     cfg.rag_similarity_threshold >= 0 &&
     cfg.rag_similarity_threshold <= 1
       ? cfg.rag_similarity_threshold
@@ -171,6 +177,17 @@ function mapAgentConfigRow(r: Row): PublishedAgentConfig {
         // Com 0.72 toda parafrase — que e como o cliente escreve — era descartada, e o RAG parecia quebrado funcionando.
         // O banco moveu o default; estes tres sitios de codigo ficaram para tras e venciam o banco, porque quem corta pelo limiar e o TypeScript.
         0.4;
+  const policy = readProductPolicy(r.organization_settings);
+  const salesEnabled = moduleDecision("sales", {
+    organizationId: "",
+    role: "admin",
+    isPlatformAdmin: false,
+    plan: policy.plan,
+    product: policy.product,
+    planModules: policy.plan_modules,
+    flags: policy.flags,
+    experimentalOptIn: policy.experimental_opt_in,
+  }).allowed;
 
   return {
     operationMode: r.operation_mode,
@@ -188,7 +205,7 @@ function mapAgentConfigRow(r: Row): PublishedAgentConfig {
     historyTokenWindow: r.history_token_window,
     handoffKeywords: (r.handoff_keywords ?? [])
       .map((k) => k.toLowerCase().trim())
-      .filter((k) => k !== ''),
+      .filter((k) => k !== ""),
     handoffToolEnabled: r.handoff_tool_enabled,
     splitMessages: r.split_messages,
     splitMaxChars: r.split_max_chars,
@@ -212,6 +229,7 @@ function mapAgentConfigRow(r: Row): PublishedAgentConfig {
     // `?? []` = NENHUM funil. O clone que ainda não aplicou a 0125 nasce
     // fechado — a direção segura é agir de menos (mesma decisão da linha acima).
     pipelineIds: r.pipeline_ids ?? [],
+    salesEnabled,
     // Leitura DEFENSIVA e que falha ABERTA: jsonb livre com shape estranho vira
     // `null` (sem janela ⇒ atende sempre), nunca uma mordaça acidental.
     janelaDeAtendimento: lerJanelaDeAtendimento(r.trigger_config),
@@ -228,6 +246,7 @@ export async function loadPublishedAgentConfig(
   const { rows } = await db.query<Row>(
     `select ${SELECT_AGENT_CONFIG_COLUMNS}
      from ai_agents a
+     join organizations o on o.id = a.organization_id
      join ai_agent_versions v on v.id = a.published_version_id
      where a.organization_id = $1
        and a.archived_at is null
@@ -259,6 +278,7 @@ export async function loadPublishedAgentConfigById(
   const { rows } = await db.query<Row>(
     `select ${SELECT_AGENT_CONFIG_COLUMNS}
      from ai_agents a
+     join organizations o on o.id = a.organization_id
      join ai_agent_versions v on v.id = a.published_version_id
      where a.organization_id = $1
        and a.archived_at is null
@@ -291,6 +311,7 @@ export async function loadAgentVersionConfig(
 ): Promise<PublishedAgentConfig | null> {
   const { rows } = await db.query<Row>(
     `select ${SELECT_AGENT_CONFIG_COLUMNS} from ai_agents a
+ join organizations o on o.id=a.organization_id
  join ai_agent_versions v on v.organization_id=a.organization_id and v.agent_id=a.id
  where a.organization_id=$1 and a.id=$2 and v.id=$3 and a.archived_at is null`,
     [organizationId, agentId, versionId],
@@ -306,7 +327,7 @@ export async function loadConversationAgentConfig(
   channelId: string,
 ) {
   const { rows } = await pool.query<{ active_ai_agent_id: string | null }>(
-    'select active_ai_agent_id from conversations where organization_id=$1 and id=$2 and channel_session_id=$3',
+    "select active_ai_agent_id from conversations where organization_id=$1 and id=$2 and channel_session_id=$3",
     [organizationId, conversationId, channelId],
   );
   return rows[0]?.active_ai_agent_id

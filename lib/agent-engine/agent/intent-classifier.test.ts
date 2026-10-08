@@ -1,5 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
+const jev = vi.hoisted(() => ({
+  configurado: vi.fn(() => true),
+  avaliar: vi.fn(),
+}));
+
+vi.mock('@/lib/ai/system-one/client', () => ({
+  jevConfigurado: jev.configurado,
+  avaliarComJev: jev.avaliar,
+}));
+
 import { buildClassifierPrompt, parseIntentVerdict, classifyIntent } from './intent-classifier';
 
 const members = [
@@ -42,53 +52,38 @@ describe('parseIntentVerdict', () => {
 });
 
 describe('classifyIntent', () => {
-  it('usa o modelo do router e purpose intent_router', async () => {
-    const runModelCall = vi.fn().mockResolvedValue({ result: { text: '{"intent":"vendas","confidence":0.88}' } });
+  it('usa Jev com purpose intent_router e nunca chama LLM', async () => {
+    jev.configurado.mockReturnValue(true);
+    jev.avaliar.mockResolvedValue({ answers: { intent: { choice: 'vendas', confidence: 0.88 } } });
+    const runModelCall = vi.fn();
     const out = await classifyIntent({} as never, {} as never,
       { tenantId: 'o1', leadId: 'l1', jobId: 'j1', router, signal: 'quanto custa' },
       { log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never, runModelCall } as never);
     expect(out).toEqual({ intentName: 'vendas', confidence: 0.88 });
-    const call = runModelCall.mock.calls[0]![2];
-    expect(call.model).toBe('claude-haiku-4-5');
-    expect(call.purpose).toBe('intent_router');
+    expect(jev.avaliar.mock.calls[0]![1]).toMatchObject({ purpose: 'intent_router', state: 'quanto custa' });
+    expect(runModelCall).not.toHaveBeenCalled();
   });
 
-  it('falha do modelo devolve null (chamador cai no fallback) e NÃO lança', async () => {
-    const runModelCall = vi.fn().mockRejectedValue(new Error('model not enabled'));
+  it('falha do Jev devolve null e nunca tenta LLM', async () => {
+    jev.configurado.mockReturnValue(true);
+    jev.avaliar.mockRejectedValue(new Error('typesafe unavailable'));
+    const runModelCall = vi.fn();
     const warn = vi.fn();
     const out = await classifyIntent({} as never, {} as never,
       { tenantId: 'o1', leadId: 'l1', jobId: 'j1', router, signal: 'oi' },
       { log: { info: vi.fn(), warn, error: vi.fn() } as never, runModelCall } as never);
     expect(out).toBeNull();
     expect(warn).toHaveBeenCalled();
-  });
-});
-
-describe('classifyIntent — provedor do classificador', () => {
-  const log = () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }) as never;
-
-  it('router com provedor próprio manda llmOverride junto do modelo', async () => {
-    const runModelCall = vi.fn().mockResolvedValue({ result: { text: '{"intent":"vendas","confidence":0.9}' } });
-    await classifyIntent({} as never, {} as never,
-      {
-        tenantId: 'o1', leadId: null, jobId: null, signal: 'quanto custa',
-        router: { ...router, classifierModel: 'gpt-5-mini', classifierProvider: 'openai' },
-      },
-      { log: log(), runModelCall } as never);
-    const call = runModelCall.mock.calls[0]![2];
-    expect(call.model).toBe('gpt-5-mini');
-    // Sem isto o id de modelo da OpenAI seria enviado ao provedor da ORG.
-    expect(call.llmOverride).toEqual({ provider: 'openai' });
+    expect(runModelCall).not.toHaveBeenCalled();
   });
 
-  it('sem provedor próprio NÃO manda override — a organização continua decidindo', async () => {
-    const runModelCall = vi.fn().mockResolvedValue({ result: { text: '{"intent":"vendas","confidence":0.9}' } });
-    await classifyIntent({} as never, {} as never,
-      {
-        tenantId: 'o1', leadId: null, jobId: null, signal: 'oi',
-        router: { ...router, classifierProvider: null },
-      },
-      { log: log(), runModelCall } as never);
-    expect(runModelCall.mock.calls[0]![2]).not.toHaveProperty('llmOverride');
+  it('sem Jev usa o fallback determinístico do roteador', async () => {
+    jev.configurado.mockReturnValue(false);
+    const runModelCall = vi.fn();
+    const out = await classifyIntent({} as never, {} as never,
+      { tenantId: 'o1', leadId: null, jobId: null, router, signal: 'oi' },
+      { log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never, runModelCall } as never);
+    expect(out).toBeNull();
+    expect(runModelCall).not.toHaveBeenCalled();
   });
 });

@@ -18,11 +18,11 @@ export const PROFILES = ["essential", "assistant_agenda", "sales"] as const;
 export type ProductProfile = (typeof PROFILES)[number];
 export const productSchema = z
   .object({
-    enabled: z.boolean().default(false),
-    profile: z.enum(PROFILES).default("sales"),
-    interface_mode: z.enum(["simple", "advanced"]).default("advanced"),
+    enabled: z.boolean().default(true),
+    profile: z.enum(PROFILES).default("assistant_agenda"),
+    interface_mode: z.enum(["simple", "advanced"]).default("simple"),
     modules: z.partialRecord(z.enum(MODULES), z.boolean()).default({}),
-    vocabulary: z.enum(["neutral", "commercial", "custom"]).default("commercial"),
+    vocabulary: z.enum(["neutral", "commercial", "custom"]).default("neutral"),
     custom_vocabulary: z.record(z.string().max(40), z.string().trim().min(1).max(80)).default({}),
   })
   .strict();
